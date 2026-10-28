@@ -36,6 +36,10 @@
     result: null
   };
   const cache = {};
+  // What is being made (paper, grayscale, color, layers) and, for lithography, the fabrication recipe.
+  const MODE = (window.FabSetup ? FabSetup.startMode() : 'paper');
+  const LITHO = MODE !== 'paper';
+  const recipe = LITHO ? FabSetup.loadRecipe(MODE) : null;
 
   /* ------------------------------------------------------- utilities */
   function toast(msg, ms) {
@@ -61,7 +65,7 @@
     state.packs = packs.map(p => ({
       id: p.id || ('pack-' + newUid()), name: p.name || 'Pack', finish: p.finish || 'smooth', weight: p.weight || '',
       material: p.material || 'Medium Cardstock - 80 lb', sheetW: p.sheetW || 8.5, sheetH: p.sheetH || 11,
-      colors: (p.colors || []).map(c => ({ uid: newUid(), id: c.id || ('c' + newUid()), name: c.name || c.hex, hex: c.hex, on: c.on !== false }))
+      colors: (p.colors || []).map(c => ({ uid: newUid(), id: c.id || ('c' + newUid()), name: c.name || c.hex, hex: c.hex, on: c.on !== false, structure: c.structure }))
     }));
   }
   function allColors() {
@@ -70,7 +74,7 @@
     return out;
   }
   function activeColors() {
-    return allColors().filter(c => c.on).map(c => ({ uid: c.uid, hex: c.hex, lab: E.hexToLab(c.hex), name: c.name, pack: c.pack.name, finish: c.pack.finish, material: c.pack.material, packObj: c.pack }));
+    return allColors().filter(c => c.on).map(c => ({ uid: c.uid, hex: c.hex, lab: E.hexToLab(c.hex), name: c.name, pack: c.pack.name, finish: c.pack.finish, material: c.pack.material, packObj: c.pack, structure: c.color.structure }));
   }
   function colorByUid(uid) { return allColors().find(c => c.uid === uid) || null; }
 
@@ -286,8 +290,21 @@
     $('busy').hidden = true;
   }
 
+  /* Lithography designs are flat puzzles at true size: every region is written once, nothing is glued.
+     These settings follow from the recipe and are re-applied before each run, so looks and presets
+     can't undo them. */
+  function applyFabSettings() {
+    if (!LITHO) return;
+    const S = state.settings;
+    S.widthIn = recipe.fieldUm / 25400;
+    S.layerMode = 'inlay'; S.underlap = 0; S.backingOn = false; S.regMarks = false; S.edgeOn = false; S.maxPieces = 0;
+    S.minFeature = recipe.minFeatureNm / 25.4e6; S.minPiece = Math.pow(2 * recipe.minFeatureNm / 25.4e6, 2);
+    if (MODE === 'grayscale') { S.mode = 'tones'; state.toneUse = null; }
+    if (MODE === 'color' && CutFab.isGrayDesign && !CutFab.FAMILIES[recipe.family].binary) { if (S.mode === 'tones') S.mode = 'cluster'; S.k = Math.min(S.k, recipe.levels); S.unique = true; }
+  }
   function runPipelineInner() {
     if (!state.work) { renderStatus(); return; }
+    applyFabSettings();
     const S = state.settings, w = state.work.w, h = state.work.h, n = w * h;
     const cols = activeColors();
     const ppi = w / S.widthIn;
@@ -320,7 +337,7 @@
 
     // cleanup
     if (S.smoothR > 0) labels = E.modeFilter(labels, w, h, S.smoothR, cols.length);
-    const minPx = Math.round(S.minPiece * ppi * ppi);
+    const minPx = Math.max(LITHO ? 6 : 0, Math.round(S.minPiece * ppi * ppi));
     if (minPx > 1) labels = E.despeckle(labels, w, h, minPx, 2, cols.length, null);
 
     // delineation
@@ -395,7 +412,7 @@
     $('edgeTag').textContent = S.edgeOn ? `${S.edgeWidth.toFixed(2)} in` : 'off';
     $('cleanTag').textContent = `≥ ${S.minPiece} in² · ≥ ${S.minFeature} in wide`;
     $('layerTag').textContent = S.layerMode;
-    $('layerChip').textContent = state.result ? `${state.result.layers.length} sheets` : '0 layers';
+    $('layerChip').textContent = state.result ? `${state.result.layers.length} ${LITHO ? (MODE === 'grayscale' ? 'levels' : MODE === 'color' ? 'structures' : 'layers') : 'sheets'}` : '0 layers';
   }
 
   function renderStage() {
@@ -559,12 +576,14 @@
     const S = state.settings;
     const hIn = state.work.h / state.work.w * S.widthIn;
     $('heightOut').textContent = fmt(hIn) + ' in';
-    let s = `<span>Working <b class="num">${state.work.w}×${state.work.h}</b> px at <b class="num">${fmt(state.work.w / S.widthIn, 0)}</b> px/in</span>`;
+    const pxNm = S.widthIn * 25.4e6 / state.work.w;
+    let s = LITHO ? `<span>Working <b class="num">${state.work.w}×${state.work.h}</b> px, <b class="num">${pxNm < 1000 ? Math.round(pxNm) + ' nm' : fmt(pxNm / 1000) + ' µm'}</b> each</span>`
+      : `<span>Working <b class="num">${state.work.w}×${state.work.h}</b> px at <b class="num">${fmt(state.work.w / S.widthIn, 0)}</b> px/in</span>`;
     if (R) {
-      const act = R.cols.length;
-      s += `<span><b>${act}</b> papers active, <b>${R.layers.length}</b> sheets to cut</span>`;
+      const act = R.cols.length, unit = LITHO ? (MODE === 'grayscale' ? 'levels' : 'structures') : 'papers';
+      s += LITHO ? `<span><b>${R.layers.length}</b> of <b>${act}</b> ${unit} used</span>` : `<span><b>${act}</b> papers active, <b>${R.layers.length}</b> sheets to cut</span>`;
       const totalPieces = R.layers.reduce((a, L) => a + L.pieces, 0);
-      s += `<span><b class="num">${totalPieces}</b> pieces total</span>`;
+      s += `<span><b class="num">${totalPieces}</b> ${LITHO ? 'separate regions' : 'pieces total'}</span>`;
       if (state.undo.length) s += `<span><b>${state.undo.length}</b> manual edits</span>`;
     }
     if (state.view === 'mapped') s += '<span class="muted">Pick: click a region to highlight its sheet · Fill/Brush recolor with the paint swatch · right-click a swatch in Paper to toggle it</span>';
@@ -700,6 +719,13 @@
     const chip = $('fitChip'), note = $('fitNote'); const S = state.settings;
     const o = outputSize();
     if (!o) { chip.className = 'chip'; chip.textContent = 'No image'; note.textContent = ''; return; }
+    if (LITHO) {
+      const wUm = o.wIn * 25400, hUm = o.hIn * 25400, ok = Math.max(wUm, hUm) <= 100000, pxNm = wUm * 1000 / state.work.w;
+      chip.className = 'chip ' + (ok ? 'ok' : 'bad'); chip.textContent = `${CutFab.fmtUm(wUm)} × ${CutFab.fmtUm(hUm)} · ${ok ? 'fits a 4 in wafer' : 'larger than a 4 in wafer'}`;
+      note.className = 'note' + (ok ? '' : ' bad');
+      note.textContent = `Field ${CutFab.fmtUm(wUm)} × ${CutFab.fmtUm(hUm)}; each working pixel is ${pxNm < 1000 ? Math.round(pxNm) + ' nm' : (pxNm / 1000).toFixed(2) + ' µm'}. Set the field width in step 1.` + (pxNm < recipe.minFeatureNm / 2 ? ' Pixels are much finer than your smallest feature, so outlines are cleaned to that size.' : '');
+      return;
+    }
     const fits = (W, H) => (o.wIn <= W && o.hIn <= H) || (o.hIn <= W && o.wIn <= H);
     const mat = fits(S.matW, S.matH), ptc = fits(S.ptcW, S.ptcH);
     const size = `${fmt(o.wIn)} × ${fmt(o.hIn)} in`;
@@ -714,6 +740,7 @@
   /* --------------------------------------------------------- cut sheet */
   function cutSheetText() {
     const R = state.result, S = state.settings; if (!R) return '';
+    if (LITHO) return CutFab.summaryText(recipe) + '\n\nRegions:\n' + R.layers.map((L, i) => ` ${String(i + 1).padStart(2)}. ${L.color.name} · ${fmt(L.areaIn2 * 645.16e6, 1)} µm² · ${L.pieces} piece${L.pieces === 1 ? '' : 's'}`).join('\n');
     const o = outputSize();
     const lines = [];
     lines.push(`CUT SHEET — ${state.image.name}`);
@@ -768,12 +795,24 @@
       }))
     };
   }
+  // The design in micrometres for the lithography exports: one region per palette entry, no overlap.
+  function buildRegionSet() {
+    const R = state.result, um = recipe.fieldUm / R.w;
+    return {
+      name: baseName(), unitNm: 1000, bounds: [0, 0, R.w * um, R.h * um], origin: 'lowerLeft',
+      layers: R.layers.map(L => ({
+        id: E.slug(L.color.name), name: L.color.name, hex: L.color.hex, structure: L.color.structure || {},
+        loops: E.flattenLoops(L.loops, state.settings.curves, null, 0.25).map(l => l.map(v => v * um))
+      }))
+    };
+  }
   let exportPanel = null;
   function exportProvider() {
     return {
+      mode: MODE, recipe: () => recipe, regionSet: () => buildRegionSet(),
       project: baseName,
       size: () => { const R = state.result, o = outputSize(); return R && R.layers.length && o ? { wIn: o.wIn, hIn: o.hIn, layers: R.layers.length } : null; },
-      layerSet: buildLayerSet,
+      layerSet: () => LITHO ? buildRegionSet() : buildLayerSet(),
       cricutSvg: buildCombinedSvg,
       cricutSvgLayers: () => state.result.layers.map((L, i) => ({ name: L.color.name, svg: buildLayerSvg(i) })),
       notes: () => [{ path: 'cricut/cut-sheet.txt', text: cutSheetText() }, { path: baseName() + '-project.json', text: projectJson() }],
@@ -1194,9 +1233,34 @@
 
   /* ------------------------------------------------------------- boot */
   function setTopbarVar() { document.documentElement.style.setProperty('--topbar-h', document.querySelector('.topbar').offsetHeight + 'px'); }
+  // Lithography: the palette comes from the recipe (gray levels or structures) and the setup panel edits it.
+  function fabPalette() { const pk = CutFab.palette(recipe); return pk || P.DEFAULT_PACKS; }
+  function mountFab() {
+    if (!LITHO) return;
+    document.body.classList.add('litho', 'mode-' + MODE);
+    $('fabSetup').hidden = false;
+    $('stepOneTitle').textContent = '1 · ' + (MODE === 'layers' ? 'Layers and size' : 'Fabrication setup');
+    $('stepOneText').textContent = MODE === 'layers' ? 'Pick colors for your layers and the true size of the design.' : 'Choose the process and its limits first: the palette, cleanup and exports all follow from them.';
+    document.querySelector('#stepBar .stepbtn[data-step="1"]').lastChild.textContent = 'Setup';
+    document.querySelector('#stepBar .stepbtn[data-step="5"]').lastChild.textContent = 'Export';
+    $('stepFiveTitle').textContent = '5 · Export';
+    $('stepFiveText').textContent = 'Every file below is drawn from the same outlines as the preview, at true size in µm. The summary at the bottom is the recipe these files were made for.';
+    $('cutSheetTitle').textContent = 'Recipe summary';
+    document.querySelector('.topbar .sub').textContent = 'Photo → ' + CutFab.MODES[MODE].short;
+    FabSetup.mount($('fabSetup'), recipe, {
+      fieldLabel: 'Field width',
+      onChange() {
+        FabSetup.saveRecipe(recipe);
+        if (MODE !== 'layers') { installPacks(fabPalette()); state.order = []; state.excluded.clear(); state.clusterMap = {}; }
+        afterPaletteChange();
+        if (exportPanel) exportPanel.refresh();
+      }
+    });
+  }
   function boot() {
     setTopbarVar(); window.addEventListener('resize', setTopbarVar);
-    installPacks(P.DEFAULT_PACKS);
+    installPacks(LITHO && MODE !== 'layers' ? fabPalette() : P.DEFAULT_PACKS);
+    mountFab();
     renderPacks(); renderDependents(); settingsToControls(); bindControls(); bindCanvas();
     renderStatus(); renderFit();
     goStep(1);
@@ -1205,7 +1269,7 @@
   }
   // Scripting hook (used by the test harness; harmless otherwise).
   window.CutStudio = {
-    state, loadImage: setImageFromSrc, loadExample, EXAMPLES, run: runPipeline, suggestions, cutSheetText, buildCombinedSvg, buildLayerSet, settingsToControls,
+    state, recipe, mode: MODE, loadImage: setImageFromSrc, loadExample, EXAMPLES, run: runPipeline, suggestions, cutSheetText, buildCombinedSvg, buildLayerSet, buildRegionSet, regionSet: () => buildRegionSet(), settingsToControls,
     setView(v) { state.view = v; if (v === 'layers' && state.result) state.stackN = state.result.layers.length; renderStage(); },
     canvas: () => $('stageCanvas'), exploreCells: () => scoreCells(exploreCells()), STYLES, SHEET_COUNTS, LOOKS, drawSheet, goStep, applyCell, setView,
     lookCells: (look) => scoreCells(exploreCells(null, [{ name: LOOKS[look].name, set: LOOKS[look].set }]))

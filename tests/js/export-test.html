@@ -66,6 +66,8 @@ const b64 = async blob => { const b = new Uint8Array(await blob.arrayBuffer()); 
     for (let j = 0; j < f.height; j++) { const r = mr.row(j); for (let i = 0; i < f.width; i++) if (r[i >> 3] & (0x80 >> (i & 7))) on++; }
     check('maskArea', Math.abs(on / 1e4 - 4.125) < 0.01, on / 1e4);
     check('frame', f.width === 350 && f.height === 200, [f.width, f.height]);
+
+    await lithography();
   } catch (e) { checks.error = { ok: false, detail: String(e) + '\n' + e.stack }; }
   const ok = Object.values(checks).every(c => c.ok);
   const resultText = JSON.stringify({ ok, checks, files });
@@ -75,4 +77,206 @@ const b64 = async blob => { const b = new Uint8Array(await blob.arrayBuffer()); 
   if (reportTo) fetch(reportTo, { method: 'POST', mode: 'no-cors', body: resultText });
   document.title = ok ? 'PASS' : 'FAIL';
 })();
+
+/* ---------------------------------------------------------------- lithography modes
+   µm sets (unitNm = 1000), per-layer GDS numbers, grid snapping, hole-free split, cells/arrays, fills. */
+const areaOf = loops => loops.reduce((a, p) => a + Math.abs(X.loopArea(p)), 0);
+const pieceArea = pc => Math.abs(X.loopArea(pc.outer)) - pc.holes.reduce((a, h) => a + Math.abs(X.loopArea(h)), 0);
+const inLoops = (x, y, loops) => {   // even-odd over all loops
+  let ins = false;
+  for (const p of loops) { const n = p.length / 2; for (let i = 0, j = n - 1; i < n; j = i++) { const xi = p[i * 2], yi = p[i * 2 + 1], xj = p[j * 2], yj = p[j * 2 + 1]; if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) ins = !ins; } }
+  return ins;
+};
+const edgesOf = loops => { const E = []; for (const p of loops) { const n = p.length / 2; for (let i = 0; i < n; i++) { const j = (i + 1) % n; E.push([p[i * 2], p[i * 2 + 1], p[j * 2], p[j * 2 + 1]]); } } return E; };
+const cross = (ax, ay, bx, by, cx, cy) => (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+const properCross = (e, f) => { const d1 = cross(e[0], e[1], e[2], e[3], f[0], f[1]), d2 = cross(e[0], e[1], e[2], e[3], f[2], f[3]), d3 = cross(f[0], f[1], f[2], f[3], e[0], e[1]), d4 = cross(f[0], f[1], f[2], f[3], e[2], e[3]); return d1 * d2 < 0 && d3 * d4 < 0; };
+const ptSeg = (px, py, e) => { const dx = e[2] - e[0], dy = e[3] - e[1], L = dx * dx + dy * dy; let t = L ? ((px - e[0]) * dx + (py - e[1]) * dy) / L : 0; t = Math.max(0, Math.min(1, t)); return Math.hypot(px - e[0] - t * dx, py - e[1] - t * dy); };
+const segDist = (e, f) => properCross(e, f) ? 0 : Math.min(ptSeg(e[0], e[1], f), ptSeg(e[2], e[3], f), ptSeg(f[0], f[1], e), ptSeg(f[2], f[3], e));
+// simple polygon: no repeated vertex, no two non-adjacent edges touching or crossing
+const isSimple = p => {
+  const n = p.length / 2, E = edgesOf([p]), keys = new Set();
+  for (let i = 0; i < n; i++) { const k = p[i * 2] + ',' + p[i * 2 + 1]; if (keys.has(k)) return false; keys.add(k); }
+  for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+    if (j === i + 1 || (i === 0 && j === n - 1)) continue;
+    if (segDist(E[i], E[j]) <= 0) return false;
+  }
+  return true;
+};
+const rot = (p, a) => { const c = Math.cos(a), s = Math.sin(a), o = []; for (let i = 0; i < p.length; i += 2) o.push(p[i] * c - p[i + 1] * s, p[i] * s + p[i + 1] * c); return o; };
+const shift = (p, dx, dy) => p.map((v, i) => v + (i & 1 ? dy : dx));
+let seed = 12345;
+const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+
+// Union of the polygons equals the region: area, no overlaps, membership at random points.
+function checkCover(name, loops, polys, opts) {
+  opts = opts || {};
+  const b = X.bounds(loops), regionArea = X.loopsToPieces(loops).reduce((a, pc) => a + pieceArea(pc), 0);
+  const got = areaOf(polys);
+  let bad = 0;
+  const pb = polys.map(p => X.bounds([p]));
+  for (let k = 0; k < (opts.samples || 3000); k++) {
+    const x = b[0] + (b[2] - b[0]) * rnd(), y = b[1] + (b[3] - b[1]) * rnd();
+    let c = 0; for (let i = 0; i < polys.length; i++) { const q = pb[i]; if (x < q[0] || x > q[2] || y < q[1] || y > q[3]) continue; if (inLoops(x, y, [polys[i]])) c++; }
+    if (c > 1 || (c === 1) !== inLoops(x, y, loops)) bad++;
+  }
+  const simple = opts.skipSimple ? true : polys.every(isSimple);
+  const ok = Math.abs(got - regionArea) <= 1e-9 * Math.max(1, regionArea) && bad === 0 && simple && (!opts.maxPolys || polys.length <= opts.maxPolys);
+  check('trap_' + name, ok, { region: regionArea, got, polys: polys.length, bad, simple });
+  return polys;
+}
+
+async function lithography() {
+  /* ---- trapezoids */
+  const rectHole = { outer: sq(0, 0, 3), holes: [sq(1, 1, 1)] };
+  checkCover('rectHole', [rectHole.outer, ...rectHole.holes], X.trapezoids(rectHole), { maxPolys: 4 });
+  checkCover('rect', [sq(0, 0, 3)], X.trapezoids({ outer: sq(0, 0, 3), holes: [] }), { maxPolys: 1 });
+  const L1 = [sq(0, 0, 2), sq(0.5, 0.5, 1), sq(0.75, 0.75, 0.5), sq(2.5, 0.5, 1), sq(2.6, 0.6, 0.25), sq(3.1, 1.1, 0.25)];
+  checkCover('L1pieces', L1, X.loopsToPieces(L1).flatMap(pc => X.trapezoids(pc)));
+  checkCover('L1loops', L1, X.trapezoids(L1));                          // plain even-odd loop list, island included
+  const diamond = (cx, cy, r) => [cx + r, cy, cx, cy + r, cx - r, cy, cx, cy - r];
+  const D = [diamond(0, 0, 5), diamond(0, 0, 3), sq(-0.5, -0.5, 1), diamond(4, 4, 1)];
+  checkCover('diamonds', D, X.trapezoids(D));
+  const oct = rot(X.circleLoop(0, 0, 10, 8), Math.PI / 8);
+  const O = [oct, [-6, -2, -2, -2, -4, 2], diamond(4, 0, 2), sq(-1, 4, 2), sq(-1, -6, 2)];
+  checkCover('octagon', O, X.trapezoids(O));
+  const C = [X.circleLoop(0, 0, 10, 720), X.circleLoop(3, 1, 4, 360)];
+  checkCover('discs', C, X.trapezoids(C), { maxPolys: 4 });
+  const star = []; for (let i = 0; i < 60; i++) { const a = 2 * Math.PI * i / 60, r = i % 2 ? 4 + 4 * rnd() : 9 + rnd(); star.push(r * Math.cos(a), r * Math.sin(a)); }
+  const S = [star, X.circleLoop(0, 0, 2, 40), sq(-0.5, -0.5, 1)];
+  checkCover('star', S, X.trapezoids(S));
+  const comb = [0, 0]; for (let i = 0; i < 20; i++) comb.push(i * 2 + 1, 0, i * 2 + 1, 5, i * 2 + 2, 5, i * 2 + 2, 0); comb.push(41, 0, 41, 10, 0, 10);
+  checkCover('comb', [comb], X.trapezoids([comb]), { maxPolys: 22 });   // 21 teeth + the bar
+  // 45° stripes touching at vertices (hole corner on the outline)
+  const T = [[0, 0, 10, 0, 10, 10, 0, 10], [5, 0, 8, 3, 5, 6, 2, 3]];
+  checkCover('touching', T, X.trapezoids(T));
+  // point cap
+  const capped = X.trapezoids({ outer: X.circleLoop(0, 0, 10, 2000), holes: [] }, 300);
+  checkCover('capped', [X.circleLoop(0, 0, 10, 2000)], capped, { skipSimple: true });
+  check('trap_capCount', capped.every(p => p.length / 2 <= 300) && capped.length >= 7, capped.map(p => p.length / 2));
+
+  // 50k vertices: a wavy disc with 20 round holes
+  const wavy = []; for (let i = 0; i < 46000; i++) { const a = 2 * Math.PI * i / 46000, r = 100 + 5 * Math.sin(50 * a) + 2 * Math.sin(377 * a); wavy.push(r * Math.cos(a), r * Math.sin(a)); }
+  const W = [wavy]; for (let k = 0; k < 20; k++) { const a = 2 * Math.PI * k / 20; W.push(X.circleLoop(60 * Math.cos(a), 60 * Math.sin(a), 8, 200)); }
+  let t0 = performance.now();
+  const Wp = X.trapezoids(X.loopsToPieces(W)[0]);
+  const tTrap = performance.now() - t0;
+  checkCover('big', W, Wp, { skipSimple: true, samples: 1500 });
+  check('trap_bigSimpleSample', Wp.filter(p => p.length < 400).slice(0, 40).every(isSimple), Wp.length);
+  check('perf_trapezoids50k', tTrap < 2000, { ms: Math.round(tTrap), vertices: W.reduce((a, p) => a + p.length / 2, 0), polygons: Wp.length });
+
+  /* ---- units, GDS numbering, split, grid */
+  const um = { name: 'litho test', bounds: [0, 0, 120, 100], origin: 'lowerLeft', unitNm: 1000, layers: [
+    { id: 'A', name: 'holes', hex: '#cc3333', loops: [shift(sq(0, 0, 30), 5, 5), shift(sq(10, 10, 10), 5, 5), shift(oct, 70, 30), shift(diamond(4, 0, 2), 70, 30), shift([-6, -2, -2, -2, -4, 2], 70, 30)], gdsLayer: 7, gdsDatatype: 3 },
+    { id: 'B', name: 'discs', hex: '#3333cc', loops: [shift(C[0], 30, 70), shift(C[1], 30, 70), shift(star, 90, 75), shift(X.circleLoop(0, 0, 2, 40), 90, 75)] },
+    { id: 'C', name: 'square', hex: '#33cc33', loops: [sq(10, 50, 100 / 3)], gdsLayer: 9 }
+  ] };
+  files['litho-keyhole.gds'] = await b64(new Blob([X.gds(um, { holes: 'keyhole' })]));
+  const sp = X.gds(um, { holes: 'split' });
+  files['litho-split.gds'] = await b64(new Blob([sp]));
+  files['litho.lyp'] = btoa(X.lyp(um));
+  check('splitStats', sp.stats[0].layer === 7 && sp.stats[0].datatype === 3 && sp.stats[2].layer === 9 && sp.stats[1].layer === 2, sp.stats);
+  files['litho-grid.gds'] = await b64(new Blob([X.gds(Object.assign({}, um, {
+    cells: { DOT: { polygons: [X.circleLoop(0, 0, 0.5, 16)], layer: 20 } },
+    layers: um.layers.concat([{ id: 'R', name: 'dots', hex: '#000', loops: [], refs: [{ cell: 'DOT', x: 3.3, y: 90.1, dx: 1.237, dy: 0, cols: 50, rows: 3, rx: 0, ry: -1.5 }, { cell: 'DOT', x: 101.1, y: 2.2 }] }])
+  }), { grid: 5, holes: 'split' })]));
+  const sq100 = { name: 'um square', bounds: [0, 0, 100, 100], origin: 'lowerLeft', unitNm: 1000, layers: [{ id: 'S', name: 'sq', hex: '#000000', loops: [sq(0, 0, 100)] }] };
+  files['um.gds'] = await b64(new Blob([X.gds(sq100)]));
+  check('physDpi', X.physDpi(sq100, 100) === 2.54e6 && X.physDpi({}, 300) === 300 && X._ppm({ dpi: 2.54e6 }) === 1e8 && X._ppm({ dpi: 100 }) === 3937, [X.physDpi(sq100, 100), X._ppm({ dpi: 2.54e6 })]);
+  const tiny = { name: 'tiny', bounds: [0, 0, 2, 1], origin: 'lowerLeft', unitNm: 1000, layers: [{ id: 'T', name: 't', hex: '#000000', loops: [sq(0.5, 0.25, 0.5)] }] };
+  const ft = X.frameForPixel(tiny, 10), tdpi = X.physDpi(tiny, ft.dpi);
+  check('frameForPixel', ft.width === 200 && ft.height === 100 && Math.abs(tdpi - 2.54e6) < 1e-6, [ft, tdpi]);
+  files['tiny-10nm.bmp'] = await b64(await X.bmp(X.maskRows(tiny.layers[0].loops, ft), { kind: 'gray1', dpi: tdpi }));
+  files['tiny-10nm.png'] = await b64(await X.png(X.maskRows(tiny.layers[0].loops, ft), { kind: 'gray1', dpi: tdpi }));
+  files['tiny-10nm.tif'] = await b64(await X.tiff(X.maskRows(tiny.layers[0].loops, ft), { kind: 'bilevel', dpi: tdpi }));
+  files['tiny-ppm.bmp'] = await b64(await X.bmp(X.maskRows(tiny.layers[0].loops, ft), { kind: 'gray1', ppm: 123456789, dpi: 1 }));
+  files['tiny-manifest.json'] = btoa(X.manifest(tiny, { frame: ft }));
+
+  /* ---- fills on a 100 µm square with a round hole */
+  const region = [sq(0, 0, 100), X.circleLoop(50, 50, 30, 64)];
+  const rArea = 1e4 - Math.abs(X.loopArea(region[1])), perim = 400 + 2 * Math.PI * 30;
+  const RE = edgesOf(region);
+  const rectInside = (r, inset) => {
+    const cx = (r[0] + r[4]) / 2, cy = (r[1] + r[5]) / 2;
+    if (!inLoops(cx, cy, region)) return false;
+    const re = edgesOf([r.map((v, i) => v + ((i & 1 ? cy : cx) - v) * 1e-9)]);   // touching the edge is fine: shrink a hair
+    for (const e of re) for (const f of RE) if (segDist(e, f) < inset - 1e-9 || (inset === 0 && properCross(e, f))) return false;
+    return true;
+  };
+  for (const [name, o] of [['g0', { period: 1, width: 0.5, angleDeg: 0 }], ['g30', { period: 1, width: 0.5, angleDeg: 30 }], ['g30inset', { period: 1.3, width: 0.4, angleDeg: -30, edgeInset: 0.3, minLength: 2 }]]) {
+    const lines = X.fillGrating(region, o), a = areaOf(lines), duty = o.width / o.period;
+    const outside = lines.filter(r => !rectInside(r, o.edgeInset || 0)).length;
+    const short = lines.filter(r => Math.hypot(r[2] - r[0], r[3] - r[1]) < (o.minLength || 0) - 1e-9).length;
+    // lines lose at most about a period's worth of strip along the boundary (plus the inset on both sides)
+    const loss = duty * rArea - a, tol = perim * (o.period + 2 * (o.edgeInset || 0)) * duty + (o.minLength || 0) * 200;
+    check('grating_' + name, outside === 0 && short === 0 && loss >= -1e-6 && loss < tol, { lines: lines.length, area: a, expect: duty * rArea, loss, tol, outside });
+    if (name === 'g30') files['grating-lines.json'] = btoa(JSON.stringify(lines.slice(0, 5)));
+  }
+  // same grating on two touching regions lines up (phase locked to the origin)
+  const gl = X.fillGrating([sq(0, 0, 10)], { period: 1, width: 0.5, angleDeg: 0 }), gr = X.fillGrating([sq(10, 0, 10)], { period: 1, width: 0.5, angleDeg: 0 });
+  check('grating_phase', gl.length === gr.length && gl.every((r, i) => r[1] === gr[i][1] && r[5] === gr[i][5]) && gl[0][1] === 0, [gl.length, gr.length, gl[0]]);
+
+  const blz = X.blazedGrating(region, { period: 2, steps: 4, angleDeg: 20 }), bA = blz.map(areaOf), bSum = bA.reduce((a, v) => a + v, 0);
+  check('blazed', blz.length === 4 && bA.every(v => Math.abs(v - rArea / 4) < perim * 2 / 4 * 1.5) && Math.abs(bSum - rArea) < perim * 2 && blz.every(L => L.every(r => rectInside(r, 0))), { areas: bA, expect: rArea / 4, sum: bSum });
+
+  // lattice: compare with a brute-force site-by-site test on a coarse lattice
+  const brute = (loops, o) => {
+    const a = (o.angleDeg || 0) * Math.PI / 180, c = Math.cos(a), s = Math.sin(a), hex = o.lattice === 'hex', h = hex ? o.pitch * Math.sqrt(3) / 2 : o.pitch, k = o.keepOut || 0;
+    const E = edgesOf(loops).map(e => [e[0] * c + e[1] * s, -e[0] * s + e[1] * c, e[2] * c + e[3] * s, -e[2] * s + e[3] * c]);
+    const hits = (e, u0, v0, u1, v1) => {   // Liang-Barsky: segment meets the closed box
+      let t0 = 0, t1 = 1; const dx = e[2] - e[0], dy = e[3] - e[1];
+      for (const [p, q] of [[-dx, e[0] - u0], [dx, u1 - e[0]], [-dy, e[1] - v0], [dy, v1 - e[1]]]) {
+        if (p === 0) { if (q < 0) return false; continue; }
+        const t = q / p; if (p < 0) { if (t > t1) return false; if (t > t0) t0 = t; } else { if (t < t0) return false; if (t < t1) t1 = t; }
+      }
+      return t0 <= t1;
+    };
+    let n = 0;
+    for (let j = -200; j <= 200; j++) for (let i = -200; i <= 200; i++) {
+      const u = (i + (hex && (j & 1) ? 0.5 : 0)) * o.pitch, v = j * h, x = u * c - v * s, y = u * s + v * c;
+      if (!inLoops(x, y, loops)) continue;
+      if (k > 0 && E.some(e => hits(e, u - k, v - k, u + k, v + k))) continue;
+      n++;
+    }
+    return n;
+  };
+  const sumN = runs => runs.reduce((a, r) => a + r.n, 0);
+  const regionL = region.map(p => shift(p, 0.37, 0.41));   // off the lattice rows, so no site sits exactly on an edge
+  for (const [name, o] of [['sq', { pitch: 2.03, lattice: 'square', keepOut: 0.61 }], ['hex15', { pitch: 2.03, lattice: 'hex', angleDeg: 15, keepOut: 0.61 }], ['hex0', { pitch: 1.97, lattice: 'hex', keepOut: 0 }]]) {
+    const runs = X.fillLattice(regionL, o), n = sumN(runs), bn = brute(regionL, o), cell = o.pitch * o.pitch * (o.lattice === 'hex' ? Math.sqrt(3) / 2 : 1);
+    const inside = runs.every(r => { for (let m = 0; m < r.n; m++) if (!inLoops(r.x + m * r.dx, r.y + m * r.dy, regionL)) return false; return true; });
+    check('lattice_' + name, n === bn && n === runs.sites && inside && Math.abs(n - rArea / cell) < perim * (o.pitch + 2 * o.keepOut) / cell, { n, brute: bn, expect: rArea / cell, runs: runs.length });
+  }
+  t0 = performance.now();
+  const bigRuns = X.fillLattice([sq(0, 0, 1000), X.circleLoop(500, 500, 200, 256)], { pitch: 0.3, lattice: 'hex', keepOut: 0.1 });
+  const tLat = performance.now() - t0, bigN = sumN(bigRuns), bigExpect = (1e6 - Math.PI * 4e4) / (0.09 * Math.sqrt(3) / 2);
+  check('perf_lattice1mm', tLat < 5000 && Math.abs(bigN / bigExpect - 1) < 0.01, { ms: Math.round(tLat), sites: bigN, expect: Math.round(bigExpect), runs: bigRuns.length });
+  t0 = performance.now();
+  const bigRuns2 = X.fillLattice([sq(0, 0, 1000), X.circleLoop(500, 500, 200, 256)], { pitch: 0.3, lattice: 'square', angleDeg: 7, keepOut: 0.1 });
+  check('perf_lattice1mmAngled', performance.now() - t0 < 5000, { ms: Math.round(performance.now() - t0), sites: sumN(bigRuns2), runs: bigRuns2.length });
+  t0 = performance.now();
+  const bigLines = X.fillGrating([sq(0, 0, 1000), X.circleLoop(500, 500, 200, 256)], { period: 0.3, width: 0.15, angleDeg: 0 });
+  check('perf_grating1mm', performance.now() - t0 < 5000, { ms: Math.round(performance.now() - t0), lines: bigLines.length });
+  t0 = performance.now();
+  const bigGds = X.gds({ name: 'big', bounds: [0, 0, 1000, 1000], origin: 'lowerLeft', unitNm: 1000, cells: { P: { polygons: [X.circleLoop(0, 0, 0.06, 32)] } },
+    layers: [{ id: 'P', name: 'pillars', hex: '#000', loops: [], refs: bigRuns.map(r => ({ cell: 'P', x: r.x, y: r.y, dx: r.dx, dy: r.dy, cols: r.n, rows: 1, rx: 0, ry: 0 })) }] }, { grid: 1 });
+  check('perf_arefGds1mm', performance.now() - t0 < 5000, { ms: Math.round(performance.now() - t0), bytes: bigGds.length, refs: bigGds.stats[0].refs, instances: bigGds.stats[0].instances });
+
+  /* ---- a structural-color file: region, grating, pillar arrays, blazed steps */
+  const fillRuns = X.fillLattice(region, { pitch: 2, lattice: 'hex', keepOut: 0.6 });
+  const angRuns = X.fillLattice([sq(0, 0, 40)], { pitch: 2, lattice: 'square', angleDeg: 15, keepOut: 0.6 });
+  const toRefs = (runs, cell) => runs.map(r => ({ cell, x: r.x, y: r.y, dx: r.dx, dy: r.dy, cols: r.n, rows: 1, rx: 0, ry: 0 }));
+  const fillSet = { name: 'fill test', bounds: [0, 0, 100, 100], origin: 'lowerLeft', unitNm: 1000,
+    cells: { PILLAR: { polygons: [X.circleLoop(0, 0, 0.5, 16)], layer: 1, datatype: 1 }, 'pillar b': { polygons: [X.circleLoop(0, 0, 0.5, 16)], datatype: 4 } },
+    layers: [
+      { id: 'R', name: 'region', hex: '#cccccc', loops: region, gdsLayer: 100 },
+      { id: 'G', name: 'lines', hex: '#ff0000', loops: X.fillGrating(region, { period: 1, width: 0.5, angleDeg: 30, edgeInset: 0.2 }), gdsLayer: 1, gdsDatatype: 0 },
+      { id: 'P', name: 'pillars', hex: '#00ff00', loops: [], refs: toRefs(fillRuns, 'PILLAR'), gdsLayer: 1, gdsDatatype: 1 },
+      { id: 'Q', name: 'angled pillars', hex: '#0000ff', loops: [], refs: toRefs(angRuns, 'pillar b'), gdsLayer: 5, gdsDatatype: 4 },
+      ...blz.map((loops, j) => ({ id: 'B' + j, name: 'step ' + j, hex: '#888888', loops, gdsLayer: 2, gdsDatatype: j }))
+    ] };
+  const fg = X.gds(fillSet, { holes: 'split' });
+  files['fill.gds'] = await b64(new Blob([fg]));
+  files['fill.lyp'] = btoa(X.lyp(fillSet));
+  checks.fillInfo = { ok: true, detail: { pillars: sumN(fillRuns), angled: sumN(angRuns), regionArea: rArea, blazed: bA, stats: fg.stats } };
+}
 </script>

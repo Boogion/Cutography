@@ -83,6 +83,41 @@ class Smoke(unittest.TestCase):
         self.assertTrue(maps['sydney']['stats']['sea'], 'Sydney Harbour should be water')
         self.assertTrue(maps['sydney']['water'])
 
+    def test_lithography_modes(self):
+        L = self.r['litho']
+        self.assertEqual(set(L), {'photoGray', 'photoColor', 'mapGray'})
+        for key, r in L.items():
+            with self.subTest(run=key):
+                self.assertEqual(r['check'], [], 'the default recipe should be valid')
+                self.assertEqual(r['unitNm'], 1000)
+                self.assertGreaterEqual(r['regions'], 2)
+                self.assertTrue(any(p.endswith('.gds') for p in r['files']))
+                self.assertTrue(any(p.endswith('recipe.json') for p in r['files']))
+        self.assertTrue(all(k == 'level' for k in L['photoGray']['structures']))
+        self.assertTrue(any(p.endswith('.bmp') for p in L['photoGray']['files']))
+        self.assertTrue(any(p.endswith('dose-table.csv') for p in L['mapGray']['files']))
+        self.assertGreater(L['photoColor']['placed'], 1000)
+        # the map field is a disc of the default 500 µm diameter
+        b = L['mapGray']['bounds']
+        self.assertAlmostEqual(b[2] - b[0], 500, delta=1)
+
+    def test_lithography_gds_in_klayout(self):
+        try:
+            import klayout.db as kdb
+        except ImportError:
+            self.skipTest('klayout Python module not installed (pip install klayout)')
+        for key, r in self.r['litho'].items():
+            gds = [p for p in r['files'] if p.endswith('.gds')][0]
+            path = os.path.join(self.tmp.name, key + '.gds')
+            with open(path, 'wb') as f:
+                f.write(base64.b64decode(r['files'][gds]))
+            ly = kdb.Layout()
+            ly.read(path)
+            top = ly.top_cell()
+            top.flatten(True)
+            total = sum(kdb.Region(top.begin_shapes_rec(li)).merged().area() for li in ly.layer_indexes()) * ly.dbu ** 2
+            self.assertGreater(total, 1000, key)     # µm²: real geometry, not an empty file
+
     def test_gds_matches_masks(self):
         try:
             import klayout.db as kdb

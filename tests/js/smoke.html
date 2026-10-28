@@ -6,7 +6,7 @@
 /* End-to-end smoke test, served by the local app (tests/py/test_smoke.py starts it):
    loads the real photo and map pages in iframes, waits for them to build, and runs every exporter on
    what they produced. Prints JSON (GDS files as base64) for the Python side to check with KLayout. */
-const out = { photo: {}, maps: {}, errors: [] };
+const out = { photo: {}, maps: {}, litho: {}, errors: [] };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const b64 = async blob => { const b = new Uint8Array(await blob.arrayBuffer()); let s = ''; for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000)); return btoa(s); };
 function frame(src) {
@@ -38,7 +38,7 @@ async function exportAll(w, set, key) {
 (async () => {
   try {
     // --- photo tool: boots on the first example photo
-    const pw = await frame('/photo.html');
+    const pw = await frame('/photo.html?mode=paper');
     await until(() => pw.CutStudio && pw.CutStudio.state.result && pw.CutStudio.state.result.layers.length, 60000, 'the photo pipeline');
     await sleep(500);
     const st = pw.CutStudio.state, set = pw.CutStudio.buildLayerSet();
@@ -54,7 +54,7 @@ async function exportAll(w, set, key) {
     out.photo.saved = pw.document.querySelector('[data-slot="saved"]').textContent;
 
     // --- map tool: every listed site
-    const mw = await frame('/map.html');
+    const mw = await frame('/map.html?mode=paper');
     await until(() => mw.MaskSet && mw.MaskSet.model, 120000, 'the first map');
     const list = await (await fetch('/api/sites')).json();
     for (const s of list.sites) {
@@ -68,6 +68,30 @@ async function exportAll(w, set, key) {
         Object.assign(r, await exportAll(mw, mset, s.id));
         out.maps[s.id] = r;
       } catch (e) { out.errors.push(s.id + ': ' + e.message); }
+    }
+
+    // --- lithography modes: the real pages build regions; the lithography exporters run on them
+    const files = async list => { const o = {}; for (const f of list) o[f.path] = await b64(new Blob([f.data])); return o; };
+    for (const [key, url, kind] of [['photoGray', '/photo.html?mode=grayscale', 'photo'], ['photoColor', '/photo.html?mode=color', 'photo'], ['mapGray', '/map.html?mode=grayscale&site=sydney', 'map']]) {
+      try {
+        const w = await frame(url);
+        const ready = kind === 'photo' ? () => w.CutStudio && w.CutStudio.state.result && w.CutStudio.state.result.layers.length : () => w.MaskSet && w.MaskSet.model && w.MaskSet.site && w.MaskSet.site.id === 'sydney';
+        await until(ready, 120000, key);
+        await sleep(300);
+        const api = kind === 'photo' ? w.CutStudio : w.MaskSet, rs = api.regionSet(), rec = api.recipe;
+        const r = { mode: rec.mode, process: rec.process, family: rec.family, regions: rs.layers.length, structures: rs.layers.map(L => L.structure && L.structure.kind), bounds: rs.bounds.map(v => +v.toFixed(2)), unitNm: rs.unitNm };
+        r.check = w.CutFab.check(rec).errors;
+        if (w.CutFab.isGrayDesign(rec)) {
+          r.files = await files(w.FabExport.grayscaleGds(rs, rec, { encoding: 'datatype', holes: 'keyhole' }).concat(await w.FabExport.grayscaleBmp(rs, rec, { pixelNm: 1000, values: 'raw' })));
+        } else {
+          r.estimate = w.FabExport.estimateFill(rs, rec);
+          const rep = {};
+          r.files = await files(w.FabExport.structureGds(rs, rec, { fill: true }, rep));
+          r.placed = rep.shapes;
+        }
+        r.ruleCheck = w.FabExport.checkReport(rs, rec).text;
+        out.litho[key] = r;
+      } catch (e) { out.errors.push(key + ': ' + e.message + '\n' + (e.stack || '')); }
     }
   } catch (e) { out.errors.push(String(e) + '\n' + (e.stack || '')); }
   const resultText = JSON.stringify(out);

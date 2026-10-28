@@ -13,6 +13,8 @@ Works with Cricut®, laser cutters, KLayout, and any tool that reads SVG, PNG, G
 | Cricut Design Space | One SVG with every layer, or one SVG/PNG per layer, plus a Print Then Cut image | The main target; sized for the Cricut Joy Xtra mat |
 | Other cutting machines (Silhouette, Brother ScanNCut) | The per-layer SVGs | Should work in any software that imports SVG (Silhouette needs Designer Edition or higher for SVG); not tested |
 | Laser cutters (LightBurn, Glowforge, xTool) | The per-layer SVGs, one file per sheet of wood, acrylic or paper | Standard SVG; stacked topo maps are a classic laser project; not tested |
+| Grayscale electron-beam lithography (BEAMER) | 8 or 16 non-overlapping dose levels as GDS (datatype or layer per level, keyhole or hole-free) or a grayscale BMP, plus a dose table | See [docs/lithography.md](docs/lithography.md) |
+| Structural color (gratings, TiO₂/Si pillars, metal nanodisks, thin films) | Regions filled with nanostructures checked against your process limits, or region masks to fill yourself | See [docs/lithography.md](docs/lithography.md) |
 | KLayout and other GDSII tools | `.gds` at true size, one layer per sheet, plus a `.lyp` color file | Tested: the test suite reads every file back with KLayout |
 | Printing, film photomasks, screen-print separations | 1-bit layer masks up to 4800 dpi, mirror and invert | PNG, TIFF or BMP with the real dpi recorded |
 | ImageJ/Fiji, MATLAB, Python, GIS | Layer masks, a label map (pixel value = layer number) and `scale.json` with the pixel size | Tested: every image is decoded independently in the tests |
@@ -67,6 +69,10 @@ If the browser doesn't open, go to **http://127.0.0.1:8765** yourself.
 3. **Look.** Choose *True to color*, *High contrast* or *Poster bands*, and how many sheets.
 4. **Refine.** Reassign colors, reorder sheets, and touch up regions with Fill or Brush.
 5. **Cut.** Export (see section 3).
+
+### Grayscale relief and structural color
+
+On the home page, choose **Grayscale relief** or **Structural color** before picking a photo or a map. The first step then asks for your process (resist only, lift-off, etch or TiO₂), materials and limits (smallest feature, height range, number of levels), and everything after follows from them: the palette is gray levels or nanostructures, sizes are in µm or mm, and the export step writes GDS and BMP files for BEAMER. Full details: [docs/lithography.md](docs/lithography.md).
 
 ### From a map
 

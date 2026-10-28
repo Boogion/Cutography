@@ -300,3 +300,10 @@ details.adv .section-body { padding: 4px 12px 12px; }
 .example { display: grid; gap: 4px; padding: 4px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); font-size: 12px; text-align: left; }
 .example:hover { border-color: var(--ink); }
 .example img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 3px; display: block; }
+
+/* ---------------- lithography modes: paper-only controls are hidden, generated palettes are read-only */
+body.litho [data-paper-only] { display: none !important; }
+body.litho:not(.mode-layers) [data-paper-palette],
+body.litho:not(.mode-layers) #packs .pack-head .btn,
+body.litho:not(.mode-layers) #packs .pack-meta { display: none !important; }
+body.litho:not(.mode-layers) #packs .pack-head input.name { pointer-events: none; border-color: transparent; background: transparent; }

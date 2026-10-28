@@ -1,0 +1,152 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>optics tests</title>
+<script src="../../web/js/optics.js"></script>
+<pre id="out"></pre>
+<script>
+const O = CutOptics;
+const results = {};
+const log = (k, v) => { results[k] = v; };
+const r3 = v => v == null ? v : +(+v).toFixed(3);
+// hue (degrees, HSV) and chroma of an [r,g,b] 0..255 colour
+const hsv = c => {
+  const [r, g, b] = c.map(v => v / 255), mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+  let h = 0;
+  if (d > 0) h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return { h: Math.round((h * 60 + 360) % 360), s: r3(mx ? d / mx : 0), v: r3(mx) };
+};
+const err = f => { try { f(); return null; } catch (e) { return { message: e.message, errors: e.errors || null }; } };
+try {
+  // 1. colour science
+  {
+    const lab = O.rgbToLab(200, 30, 80);
+    log('color', {
+      white: O.spectrumToRgb(() => 1), black: O.spectrumToRgb(() => 0), grey18: O.spectrumToRgb(() => 0.18),
+      half: O.spectrumToRgb(() => 1, { exposure: 0.5 }),
+      hex: O.rgbToHex(255, 128, 0), hexArr: O.rgbToHex([1, 2, 3]), hexBack: O.hexToRgb('#ff8000'), hexShort: O.hexToRgb('f80'), hexBad: O.hexToRgb('zz'),
+      mono: [400, 450, 470, 500, 530, 560, 580, 600, 620, 650, 700].map(l => ({ l, rgb: O.wavelengthToRgb(l) })),
+      monoMaxChannel: Math.max(...Array.from({ length: 401 }, (_, i) => Math.max(...O.wavelengthToRgb(380 + i)))),
+      monoDesat: O.wavelengthToRgb(620, { saturation: 0 }), monoDim: O.wavelengthToRgb(620, { brightness: 0.25 }),
+      // narrow band reflector (10 nm box at 620) and a saturated reflective green: gamut clip keeps hue
+      boxRed: O.spectrumToRgb(l => Math.abs(l - 620) <= 10 ? 1 : 0), boxGreen: O.spectrumToRgb(l => Math.abs(l - 530) <= 15 ? 1 : 0),
+      clipped: O.fitGamut([1.4, 0.3, -0.2]), sharma1: +O.deltaE2000([50, 2.6772, -79.7751], [50, 0, -82.7485]).toFixed(4),
+      lab: lab.map(v => +v.toFixed(2)), cmf555: O.cmf(555).map(r3), d65_560: O.d65(560)
+    });
+  }
+  // 2. optical constants
+  {
+    const m = {};
+    ['Si', 'SiO2', 'fused silica', 'PMMA', 'ZEP520A', 'HSQ', 'ma-N 2400', 'TiO2', 'tio2 anatase', 'Al', 'Ag', 'Au', 'Cr', 'air', 'man2400', 'Fused Silica', 'thermal oxide'].forEach(n => {
+      const f = O.material(n); m[n] = [400, 550, 633, 700].map(l => { const v = f(l); return [r3(v.n), r3(v.k)]; });
+    });
+    log('materials', { m, list: O.materials(), unknown: err(() => O.material('unobtainium')), constant: O.material(1.5)(500), obj: O.material({ n: 2, k: 0.1 })(500) });
+  }
+  // 3. thin films
+  {
+    const R = (f, t, s, l) => r3(O.thinFilmReflectance(l, f, t, s));
+    const chart = Array.from({ length: 53 }, (_, i) => i * 10)
+      .map(t => { const c = O.thinFilmColor('SiO2', t, 'Si'); return { t, hex: c.hex, rgb: c.rgb, hsv: hsv(c.rgb) }; });
+    // quarter-wave check: SiO2 at 550 / (4 n) ≈ 94 nm should be a reflectance minimum near 550 nm
+    const qw = 550 / (4 * O.material('SiO2')(550).n), spec = []; for (let l = 400; l <= 750; l += 5) spec.push([l, R('SiO2', qw, 'Si', l)]);
+    const minAt = spec.reduce((a, b) => b[1] < a[1] ? b : a);
+    // lossless sanity: film on fused silica stays within 0..1 and equals bare glass at half-wave thickness
+    const nP = O.material('PMMA')(600).n;
+    log('thinfilm', {
+      bareSi550: R('PMMA', 0, 'Si', 550), bareSiColor: O.thinFilmColor('SiO2', 0, 'Si'), bareSiHsv: hsv(O.thinFilmColor('SiO2', 0, 'Si').rgb),
+      bareGlass550: R('PMMA', 0, 'fused silica', 550), halfWaveOnGlass: R('PMMA', 600 / (2 * nP), 'fused silica', 600), glass600: R('PMMA', 0, 'fused silica', 600),
+      quarterWaveNm: r3(qw), minAt, chart,
+      pmma: O.thinFilmPalette('PMMA', 'Si', 50, 300, 50).map(e => [e.thicknessNm, e.hex]),
+      paletteDefault: O.thinFilmPalette('PMMA', 'Si').length,
+      metalSub: { ag550: R('SiO2', 0, 'Ag', 550), al550: R('SiO2', 0, 'Al', 550), au700: R('SiO2', 0, 'Au', 700), au450: R('SiO2', 0, 'Au', 450), cr550: R('SiO2', 0, 'Cr', 550) },
+      zepOnSi: O.thinFilmColor('ZEP520A', 150, 'Si'), hsqOnSi: O.thinFilmColor('HSQ', 150, 'Si'), manOnSi: O.thinFilmColor('ma-N 2400', 150, 'Si'), tio2OnSi: O.thinFilmColor('TiO2', 60, 'Si')
+    });
+  }
+  // 4. gratings
+  {
+    const d = 700, el = 30, lam = d * Math.cos(el * Math.PI / 180);   // = d·sinθ, θ from the normal
+    const matched = O.gratingColor({ periodNm: d, lineAngleDeg: 90, duty: 0.5 }, { viewElevDeg: el, viewAzimuthDeg: 0 });
+    const along = O.gratingColor({ periodNm: d, lineAngleDeg: 0, duty: 0.5 }, { viewElevDeg: el, viewAzimuthDeg: 0 });
+    const off = [0, 3, 7, 15, 30, 60, 90].map(a => ({ a, b: r3(O.gratingColor({ periodNm: d, lineAngleDeg: 90 }, { viewElevDeg: el, viewAzimuthDeg: a }).brightness) }));
+    const opposite = O.gratingColor({ periodNm: d, lineAngleDeg: 90 }, { viewElevDeg: el, viewAzimuthDeg: 180 });
+    const d2 = O.gratingColor({ periodNm: 1100, lineAngleDeg: 90, duty: 0.3 }, { viewElevDeg: 45 });
+    const d2half = O.gratingColor({ periodNm: 1100, lineAngleDeg: 90, duty: 0.5 }, { viewElevDeg: 45 });
+    const tooShort = O.gratingColor({ periodNm: 300 }, { viewElevDeg: 30 });
+    const pal = O.gratingPalette({ viewElevDeg: 30, count: 12 });
+    const pal60 = O.gratingPalette({ viewElevDeg: 60, count: 12 });
+    const palSteep = O.gratingPalette({ viewElevDeg: 85, count: 12 });
+    const palMin = O.gratingPalette({ viewElevDeg: 5, count: 12, minPeriodNm: 200 });
+    const inv = [450, 550, 650].map(l => { const p = O.gratingPeriodFor(l, { viewElevDeg: 40 }); return { l, p: r3(p), back: r3(O.gratingColor({ periodNm: p, lineAngleDeg: 90 }, { viewElevDeg: 40 }).wavelengthNm) }; });
+    const tilted = O.gratingColor({ periodNm: 450, lineAngleDeg: 90 }, { viewElevDeg: 30, illumElevDeg: 60, illumAzimuthDeg: 0 });
+    const tiltedFar = O.gratingColor({ periodNm: 1000, lineAngleDeg: 90 }, { viewElevDeg: 30, illumElevDeg: 60, illumAzimuthDeg: 180 });
+    const palLittrow = O.gratingPalette({ viewElevDeg: 10, illumElevDeg: 10, count: 12, minPeriodNm: 240 });
+    log('grating', {
+      expected: r3(lam), matched: { hex: matched.hex, rgb: matched.rgb, l: r3(matched.wavelengthNm), b: r3(matched.brightness), orders: matched.orders, fab: matched.fab },
+      along: { hex: along.hex, l: along.wavelengthNm, b: r3(along.brightness) }, off, opposite: { l: r3(opposite.wavelengthNm), hex: opposite.hex },
+      secondOrder: { duty03: d2.orders.map(o => [o.order, r3(o.wavelengthNm), r3(o.weight)]), duty05: d2half.orders.map(o => [o.order, r3(o.wavelengthNm), r3(o.weight)]) },
+      tooShort: { l: tooShort.wavelengthNm, hex: tooShort.hex, fab: tooShort.fab },
+      period620_30: r3(O.gratingPeriodFor(620, { viewElevDeg: 30 })), period620_30_m2: r3(O.gratingPeriodFor(620, { viewElevDeg: 30, order: 2 })), straightDown: O.gratingPeriodFor(550, { viewElevDeg: 90 }),
+      inv, tilted: { l: r3(tilted.wavelengthNm), expected: r3(450 * (Math.cos(Math.PI / 6) + Math.cos(Math.PI / 3))) }, tiltedFar: { l: r3(tiltedFar.wavelengthNm), expected: r3(1000 * (Math.cos(Math.PI / 6) - Math.cos(Math.PI / 3))) },
+      palLittrow: palLittrow.map(e => r3(e.periodNm)),
+      palette: pal.map(e => ({ p: r3(e.periodNm), l: r3(e.wavelengthNm), hex: e.hex, duty: r3(e.duty), b: r3(e.brightness), ang: e.lineAngleDeg, hsv: hsv(O.hexToRgb(e.hex)) })),
+      pal60: pal60.map(e => [r3(e.periodNm), e.hex]), palSteepCount: palSteep.length, palMin: palMin.map(e => r3(e.periodNm)),
+      badPeriod: err(() => O.gratingColor({ periodNm: -5 }))
+    });
+  }
+  // 5. pillars
+  {
+    const fams = O.pillarFamilies(), pal = {};
+    fams.forEach(f => { pal[f] = O.pillarPalette(f, { count: 8 }).map(e => ({ d: r3(e.diameterNm), p: r3(e.pitchNm), h: e.heightNm, hex: e.hex, res: r3(e.resonanceNm), mode: e.mode, ok: e.fab.ok, note: e.note, hsv: hsv(e.rgb) })); });
+    const tight = O.pillarPalette('al-disk', { heightNm: 30, minFeatureNm: 80, minGapNm: 60, count: 4 }).map(e => [e.diameterNm, e.pitchNm]);
+    const strict = O.pillarPalette('tio2-pillar', { heightNm: 300, minFeatureNm: 120, minGapNm: 150, count: 5 }).map(e => [e.diameterNm, e.pitchNm]);
+    const one = O.pillarColorEstimate('tio2-pillar', { diameterNm: 150, heightNm: 300, pitchNm: 280 });
+    const bad = O.pillarColorEstimate('si-pillar', { diameterNm: 80, heightNm: 600, pitchNm: 140 });
+    const heights = {}; [['al-disk', 300], ['ag-disk', 300], ['au-disk', 300], ['tio2-pillar', 100], ['tio2-pillar', 500], ['si-pillar', 500], ['al-disk', 10]].forEach(([f, h]) => { heights[f + '@' + h] = O.pillarPalette(f, { heightNm: h, count: 6 }).map(e => [Math.round(e.diameterNm), e.hex, Math.round(e.resonanceNm)]); });
+    const heightClamp = O.pillarPalette('ag-disk', { heightNm: 900, count: 2 }).map(e => e.heightNm);
+    const spec = O.pillarSpectrum('ag-disk', { diameterNm: 120, heightNm: 40, pitchNm: 220 });
+    const caveat = { tall: O.pillarColorEstimate('al-disk', { diameterNm: 120, heightNm: 300 }).caveat || null, thin: O.pillarColorEstimate('al-disk', { diameterNm: 120, heightNm: 40 }).caveat || null };
+    log('pillar', { fams, pal, heights, caveat, tight, strict, one, bad: { ok: bad.fab.ok, issues: bad.fab.issues, note: bad.note }, heightClamp,
+      specMax: Math.max(...spec.map(s => s[1])), specMin: Math.min(...spec.map(s => s[1])),
+      unknown: err(() => O.pillarColorEstimate('unobtainium', { diameterNm: 100 })), alias: O.pillarColorEstimate('TiO2', { diameterNm: 150 }).family });
+  }
+  // 6. libraries
+  {
+    const ex = O.parseLibraryCsv(O.exampleLibraryCsv());
+    const shuffled = O.parseLibraryCsv('HEX;Duty;Period (nm);Name;Family;extra\n"#ABC";50%;600nm;"Grating, blue";Gratings;x\n\n# comment\n#00ff00;0.4;700;;grating;\n');
+    const rgbCols = O.parseLibraryCsv('family,diameter_nm,pitch_nm,height_nm,R,G,B\nTiO2 pillar,150,260,300,10,200,30\n');
+    const badText = 'name,family,period_nm,duty,hex\nok,grating,600,0.5,#123456\nbad1,grating,abc,0.5,#123456\nbad2,grating,600,1.4,#123456\nbad3,grating,600,0.5,#12345z\nbad4,grating,-5,0.5,#123456\n';
+    const strictErr = err(() => O.parseLibraryCsv(badText));
+    const lenient = O.parseLibraryCsv(badText, { lenient: true });
+    const fabWarn = O.parseLibraryCsv('family,diameter_nm,pitch_nm,height_nm,hex\nal-disk,60,100,40,#ffffff\n');
+    log('csv', {
+      example: ex.map(e => ({ name: e.name, family: e.family, params: e.params, hex: e.hex, measured: e.measured })), exampleWarnings: ex.warnings,
+      shuffled: shuffled.map(e => ({ name: e.name, family: e.family, params: e.params, hex: e.hex })), shuffledWarnings: shuffled.warnings,
+      rgbCols: rgbCols.map(e => ({ name: e.name, family: e.family, params: e.params, hex: e.hex })),
+      strictErr, lenient: { n: lenient.length, errors: lenient.errors },
+      noColour: err(() => O.parseLibraryCsv('name,family,period_nm\na,grating,500\n')), empty: err(() => O.parseLibraryCsv('  \n# only a comment\n')),
+      headerOnly: err(() => O.parseLibraryCsv('name,hex\n')), missingRgb: err(() => O.parseLibraryCsv('name,r,g,b\na,1,2,\n')), rgbRange: err(() => O.parseLibraryCsv('name,r,g,b\na,1,2,300\n')),
+      pitchLess: err(() => O.parseLibraryCsv('family,diameter_nm,pitch_nm,hex\nal-disk,200,150,#ffffff\n')), notString: err(() => O.parseLibraryCsv(null)),
+      fabWarn: fabWarn.warnings
+    });
+  }
+  // 7. nearest
+  {
+    const lib = O.parseLibraryCsv(O.exampleLibraryCsv());
+    const q = ['#3355dd', '#dd4433', '#40b050', '#ffffff'].map(h => { const n = O.nearestEntry(h, lib); return { h, name: n.entry.name, i: n.index, de: r3(n.deltaE) }; });
+    const pal = O.thinFilmPalette('SiO2', 'Si', 10, 500, 10), oxide = O.nearestEntry(O.thinFilmColor('SiO2', 230, 'Si').hex, pal);
+    log('nearest', { q, exact: r3(O.nearestEntry('#3653d8', lib).deltaE), m76: O.nearestEntry('#3355dd', lib, { metric: '76' }).entry.name,
+      empty: O.nearestEntry('#000000', []), skipBad: O.nearestEntry('#000000', [{ hex: 'nope' }, { hex: '#010101' }]).index,
+      oxide: { t: oxide.entry.thicknessNm, de: r3(oxide.deltaE) }, badHex: err(() => O.nearestEntry('blue', lib)) });
+  }
+  // speed: a 51-entry thin-film palette and a 12-entry pillar palette
+  {
+    const t0 = performance.now(); O.thinFilmPalette('SiO2', 'Si', 0, 500, 10); O.pillarPalette('au-disk', { count: 12 }); O.gratingPalette({ count: 12 });
+    log('timing', { ms: Math.round(performance.now() - t0) });
+  }
+  results.ALL_OK = true;
+} catch (e) { results.error = String(e) + '\n' + e.stack; }
+const resultText = JSON.stringify(results, null, 1);
+document.getElementById('out').textContent = resultText;
+// tests/py/jsbrowser.py waits for this POST (the page's ?report= URL)
+const reportTo = new URLSearchParams(location.search).get('report');
+if (reportTo) fetch(reportTo, { method: 'POST', mode: 'no-cors', body: resultText });
+</script>

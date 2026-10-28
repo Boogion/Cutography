@@ -2,7 +2,8 @@
 
 Runs tests/js/export-test.html in headless Edge/Chrome, then reads the GDS, PNG and TIFF files it
 produced with small readers below (and with KLayout's own reader when `klayout` is installed).
-Skipped when no browser is found."""
+The lithography part covers µm units, per-layer GDS numbers, grid snapping, hole-free splitting,
+structure cells placed as arrays, and the grating/lattice fills. Skipped when no browser is found."""
 import base64
 import json
 import math
@@ -54,6 +55,31 @@ def read_gds(data):
                 out['layers'].setdefault(layer, []).append(pts)
         elif rt == 0x19:
             out['texts'].append(body.rstrip(b'\0').decode())
+    return out
+
+
+def gds_elements(data):
+    """Every element as a dict: kind (BOUNDARY, SREF, AREF, TEXT), layer, datatype, xy, sname, colrow."""
+    kinds = {0x08: 'BOUNDARY', 0x0A: 'SREF', 0x0B: 'AREF', 0x0C: 'TEXT'}
+    out, el = [], None
+    for rt, dt, body in gds_records(data):
+        if rt in kinds:
+            el = {'kind': kinds[rt]}
+        elif el is None:
+            continue
+        elif rt == 0x0D:
+            el['layer'] = struct.unpack('>h', body)[0]
+        elif rt == 0x0E:
+            el['datatype'] = struct.unpack('>h', body)[0]
+        elif rt == 0x12:
+            el['sname'] = body.rstrip(b'\0').decode()
+        elif rt == 0x13:
+            el['colrow'] = struct.unpack('>hh', body)
+        elif rt == 0x10:
+            el['xy'] = struct.unpack('>%di' % (len(body) // 4), body)
+        elif rt == 0x11:
+            out.append(el)
+            el = None
     return out
 
 
@@ -296,6 +322,131 @@ class ExportWriters(unittest.TestCase):
         rgb = read_bmp(self.files['rgb.bmp'])
         self.assertEqual(rgb['bpp'], 24)
         self.assertEqual(rgb['rows'], [bytes(r) for r in read_png(self.files['rgb.png'])['rows']])
+
+    # ---- lithography modes: µm units, per-layer numbers, split holes, grid, cells and arrays, fills
+
+    def read_layout(self, name):
+        try:
+            import klayout.db as kdb
+        except ImportError:
+            self.skipTest('klayout Python module not installed (pip install klayout)')
+        import os
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, name)
+            with open(path, 'wb') as f:
+                f.write(self.files[name])
+            ly = kdb.Layout()
+            ly.read(path)
+        return kdb, ly
+
+    def test_um_units(self):
+        kdb, ly = self.read_layout('um.gds')
+        box = ly.top_cell().dbbox()
+        self.assertEqual((box.left, box.bottom, box.width(), box.height()), (0, 0, 100, 100))
+
+    def test_split_matches_keyhole(self):
+        kdb, ks = self.read_layout('litho-keyhole.gds')
+        _, sp = self.read_layout('litho-split.gds')
+        self.assertEqual(sorted((i.layer, i.datatype) for i in sp.layer_infos()), [(2, 0), (7, 3), (9, 0)])
+        holes_in_keyhole = 0
+        for ld in ((7, 3), (2, 0), (9, 0)):
+            a = kdb.Region(ks.top_cell().begin_shapes_rec(ks.layer(*ld))).merged()
+            b = kdb.Region(sp.top_cell().begin_shapes_rec(sp.layer(*ld))).merged()
+            self.assertGreater(a.area(), 0)
+            # trapezoid corners interpolated on slanted edges are rounded to 1 nm: a sliver along the outline
+            self.assertAlmostEqual(b.area() / a.area(), 1, delta=1e-4, msg=str(ld))
+            self.assertEqual(a.count(), b.count(), str(ld))
+            for p in kdb.Region(sp.top_cell().begin_shapes_rec(sp.layer(*ld))).each():
+                m = kdb.Region(p).merged()
+                self.assertEqual((m.count(), sum(q.holes() for q in m.each())), (1, 0), 'split polygon has a hole: %s' % p)
+            for p in kdb.Region(ks.top_cell().begin_shapes_rec(ks.layer(*ld))).each():
+                holes_in_keyhole += sum(q.holes() for q in kdb.Region(p).merged().each())
+        self.assertGreater(holes_in_keyhole, 0, 'the keyhole file should have holes once its slits are merged')
+        # no zero-width slits: no edge is walked twice in opposite directions
+        for el in gds_elements(self.files['litho-split.gds']):
+            pts = list(zip(el['xy'][0::2], el['xy'][1::2]))
+            edges = set(zip(pts, pts[1:]))
+            self.assertFalse(any((b, a) in edges for a, b in edges))
+
+    def test_gds_numbers_and_lyp(self):
+        els = gds_elements(self.files['litho-split.gds'])
+        self.assertEqual({(e['layer'], e['datatype']) for e in els}, {(7, 3), (2, 0), (9, 0)})
+        self.assertEqual(len(read_gds(self.files['litho-split.gds'])['cells']), 1)
+        text = self.files['litho.lyp'].decode()
+        for src in ('7/3@1', '2/0@1', '9/0@1'):
+            self.assertIn('<source>%s</source>' % src, text)
+        self.assertIn('<name>07/3 holes</name>', text)
+        self.assertIn('<source>1/1@1</source>', self.files['fill.lyp'].decode())
+
+    def test_grid_snapping(self):
+        els = gds_elements(self.files['litho-grid.gds'])
+        self.assertTrue(any(e['kind'] == 'AREF' for e in els) and any(e['kind'] == 'SREF' for e in els))
+        for e in els:
+            self.assertTrue(all(v % 5 == 0 for v in e['xy']), e)
+        kdb, ly = self.read_layout('litho-grid.gds')
+        top = ly.top_cell()
+        top.flatten(True)
+        self.assertEqual(top.shapes(ly.layer(20, 0)).size(), 50 * 3 + 1)
+
+    def test_rasters_with_tiny_pixels(self):
+        b = read_bmp(self.files['tiny-10nm.bmp'])
+        self.assertEqual((b['w'], b['h'], b['ppm']), (200, 100, 100000000))
+        self.assertEqual(read_bmp(self.files['tiny-ppm.bmp'])['ppm'], 123456789)
+        p = read_png(self.files['tiny-10nm.png'])
+        self.assertEqual(p['ppm'], (100000000, 100000000))
+        on = sum(bit(r, i) for r in p['rows'] for i in range(p['w']))
+        self.assertEqual(on, 50 * 50)          # a 0.5 µm square at 10 nm pixels
+        t = read_tiff(self.files['tiny-10nm.tif'])
+        self.assertAlmostEqual(t['tags'][282][0], 2.54e6, delta=1)
+        m = json.loads(self.files['tiny-manifest.json'])
+        self.assertAlmostEqual(m['nanometresPerPixel'], 10)
+        self.assertAlmostEqual(m['micrometresPerPixel'], 0.01)
+
+    def test_fill_file(self):
+        info = self.res['checks']['fillInfo']['detail']
+        kdb, ly = self.read_layout('fill.gds')
+        self.assertEqual(sorted(c.name for c in ly.each_cell()), ['FILL_TEST', 'PILLAR', 'PILLAR_B'])
+        top = ly.top_cell()
+        self.assertEqual(top.name, 'FILL_TEST')
+        top.flatten(True)
+        um2 = ly.dbu ** 2
+        region = kdb.Region(top.shapes(ly.layer(100, 0))).merged()
+        self.assertAlmostEqual(region.area() * um2, info['regionArea'], delta=0.1)   # vertices rounded to 1 nm
+        pillars = kdb.Region(top.shapes(ly.layer(1, 1)))
+        self.assertEqual(pillars.count(), info['pillars'])
+        self.assertEqual((pillars - region).area(), 0)
+        self.assertEqual(pillars.merged().count(), info['pillars'])       # no two pillars touch
+        lines = kdb.Region(top.shapes(ly.layer(1, 0)))
+        self.assertGreater(lines.count(), 100)
+        self.assertEqual((lines - region).area(), 0)
+        # with a 0.2 µm inset the lines stay at least that far from the region outline
+        self.assertEqual((lines.sized(150) - region).area(), 0)
+        self.assertGreater((lines.sized(250) - region).area(), 0)
+        # blazed steps: 4 datatypes, disjoint, each about a quarter of the region
+        steps = [kdb.Region(top.shapes(ly.layer(2, j))) for j in range(4)]
+        total = kdb.Region()
+        for j, s in enumerate(steps):
+            self.assertAlmostEqual(s.area() * um2 / info['blazed'][j], 1, delta=1e-3)    # slanted strip corners on the 1 nm grid
+            self.assertAlmostEqual(s.area() * um2 / info['regionArea'], 0.25, delta=0.02)
+            total += s
+        # disjoint up to rounding: neighbouring steps share slanted edges whose ends are rounded to 1 nm
+        # separately, so they can overlap by about a nanometre along them (at most half the perimeter long)
+        overlap = sum(s.area() for s in steps) - total.merged().area()
+        self.assertLess(overlap, 0.5 * total.perimeter())
+        self.assertEqual((total.sized(-1) - region).area(), 0)     # steps may touch the outline (no inset here)
+        # angled lattice (15°, steps not whole nm): arrays are cut so every pillar sits within ~1 nm of its site
+        angled = kdb.Region(top.shapes(ly.layer(5, 4)))
+        self.assertEqual(angled.count(), info['angled'])
+        c, s = math.cos(math.radians(15)), math.sin(math.radians(15))
+        worst = 0
+        for p in angled.each():
+            ctr = p.bbox().center()
+            x, y = ctr.x / 1000, 100 - ctr.y / 1000     # back to the y-down set frame, µm
+            u, v = x * c + y * s, -x * s + y * c
+            worst = max(worst, abs(u / 2 - round(u / 2)) * 2, abs(v / 2 - round(v / 2)) * 2)
+        self.assertLess(worst * 1000, 2.0, 'nm off the lattice')
+        self.assertEqual((angled - kdb.Region(kdb.Box(0, 60000, 40000, 100000))).area(), 0)
 
     def test_manifest(self):
         m = json.loads(self.files['manifest.json'])

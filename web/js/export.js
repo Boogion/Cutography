@@ -6,10 +6,16 @@
        layers: [{ id, name, hex, paper, loops }] } bottom -> top
    loops are closed polygons [x0, y0, x1, y1, ...] in inches, filled with the even-odd rule:
    a loop inside another loop is a hole, a loop inside a hole is an island, and so on.
+   Optional extras (the lithography modes):
+     set.unitNm                    nanometres per coordinate unit (absent = inches, 25.4e6; µm sets use 1000)
+     layer.gdsLayer, .gdsDatatype  GDS numbers 0..255 (default layer i + 1, datatype 0)
+     set.cells {NAME: {polygons, layer, datatype}}, layer.refs [{cell, x, y, dx, dy, cols, rows, rx, ry}]
+                                   structure cells placed as GDS arrays (see X.gds)
 
    Writers:  GDSII (+ KLayout .lyp), PNG (1-bit, indexed, with DPI), TIFF (bilevel, 8-bit, RGB;
    PackBits), BMP (1-bit, 8-bit, 24-bit), and a scale.json manifest. Rasters are drawn row by row with a scanline fill, so
-   size is limited only by memory for the compressed output, not by the browser's canvas cap. */
+   size is limited only by memory for the compressed output, not by the browser's canvas cap.
+   Fill generators: gratings, blazed (staircase) gratings and pillar lattices clipped to a region. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
   else root.CutExport = factory();
@@ -17,6 +23,10 @@
   'use strict';
   const X = {};
   const NM_PER_IN = 25.4e6;
+  const unitNmOf = set => (set && set.unitNm > 0 ? set.unitNm : NM_PER_IN);
+  X.unitNm = unitNmOf;
+  // Physical dpi of a raster drawn at ppu pixels per coordinate unit (X.frame's second argument).
+  X.physDpi = (set, ppu) => { const u = unitNmOf(set); return u === NM_PER_IN ? ppu : ppu * NM_PER_IN / u; };
 
   /* ------------------------------------------------------------ geometry */
   X.loopArea = function (p) {
@@ -127,6 +137,224 @@
     return parts.flatMap(q => X.splitLarge(q, maxPts));
   };
 
+  /* Hole-free decomposition of a piece {outer, holes} (or a plain list of even-odd loops) into simple
+     polygons whose union is exactly the piece, for writers that refuse keyholes. Horizontal slabs are cut
+     at every vertex y; in each slab the crossing edges, ordered by x, pair up (even-odd) into trapezoids.
+     A trapezoid joins the polygon of the one below when each is the other's only neighbour across the
+     slab boundary, so every output polygon is y-monotone (one interval per row: no holes, no slits).
+     A run along the same left/right edges stays 4 points; a rectangle with a square hole gives 4 polygons,
+     a disc gives 1. maxPts (default 8000) caps the points per polygon. Assumes loops don't cross. */
+  X.trapezoids = function (piece, maxPts) {
+    maxPts = Math.max(8, maxPts || 8000);
+    const loops = Array.isArray(piece) ? piece : [piece.outer].concat(piece.holes || []);
+    const E = [], ys = [];
+    let x0 = Infinity, x1 = -Infinity;
+    for (const p of loops) {
+      const n = p.length / 2;
+      if (n < 3) continue;
+      for (let i = 0; i < n; i++) {
+        const j = (i + 1) % n, ax = p[i * 2], ay = p[i * 2 + 1], bx = p[j * 2], by = p[j * 2 + 1];
+        ys.push(ay); if (ax < x0) x0 = ax; if (ax > x1) x1 = ax;
+        if (ay === by) continue;                        // horizontal edges only bound slabs
+        E.push(ay < by ? { xa: ax, ya: ay, xb: bx, yb: by, xm: 0 } : { xa: bx, ya: by, xb: ax, yb: ay, xm: 0 });
+      }
+    }
+    if (!E.length) return [];
+    ys.sort((a, b) => a - b);
+    E.sort((a, b) => a.ya - b.ya);
+    const eps = (x1 - x0) * 1e-12;
+    // x on an edge at height y, exact at its end points so shared vertices match bit for bit
+    const xAt = (e, y) => y === e.ya ? e.xa : y === e.yb ? e.xb : e.xa + (y - e.ya) * (e.xb - e.xa) / (e.yb - e.ya);
+    const chains = [];
+    const side = (P, e, last, x0_, y0_, x1_, y1_) => {   // extend one side of a chain; returns its edge
+      if (e === last) { P[P.length - 2] = x1_; P[P.length - 1] = y1_; return e; }   // same edge: move its end
+      if (P[P.length - 2] !== x0_ || P[P.length - 1] !== y0_) P.push(x0_, y0_);
+      P.push(x1_, y1_); return e;
+    };
+    let next = 0, act = [], prev = [], prevY = NaN;
+    for (let k = 0; k + 1 < ys.length; k++) {
+      const ya = ys[k], yb = ys[k + 1];
+      if (yb === ya) continue;
+      while (next < E.length && E[next].ya <= ya) act.push(E[next++]);
+      act = act.filter(e => e.yb > ya);
+      const ym = (ya + yb) / 2;
+      for (const e of act) e.xm = xAt(e, ym);
+      for (let i = 1; i < act.length; i++) {             // insertion sort: the order barely changes between slabs
+        const e = act[i]; let q = i - 1;
+        while (q >= 0 && act[q].xm > e.xm) { act[q + 1] = act[q]; q--; }
+        act[q + 1] = e;
+      }
+      const cur = [];
+      for (let q = 0; q + 1 < act.length; q += 2) {
+        const l = act[q], r = act[q + 1];
+        const t = { l, r, xl0: xAt(l, ya), xl1: xAt(l, yb), xr0: xAt(r, ya), xr1: xAt(r, yb), dn: null, nDn: 0, nUp: 0, ch: null };
+        if (t.xr0 - t.xl0 <= eps && t.xr1 - t.xl1 <= eps) continue;
+        cur.push(t);
+      }
+      // neighbours across y = ya: both lists are sorted and disjoint, so walk them together
+      if (prevY === ya) {
+        let i = 0, j = 0;
+        while (i < prev.length && j < cur.length) {
+          const a = prev[i], b = cur[j];
+          if (Math.min(a.xr1, b.xr0) - Math.max(a.xl1, b.xl0) > eps) { a.nUp++; b.nDn++; b.dn = a; }
+          if (a.xr1 < b.xr1) i++; else j++;
+        }
+      }
+      for (const t of cur) {
+        const c = t.nDn === 1 && t.dn.nUp === 1 ? t.dn.ch : null;
+        if (c && c.L.length / 2 + c.R.length / 2 + 4 <= maxPts) {
+          c.el = side(c.L, t.l, c.el, t.xl0, ya, t.xl1, yb);
+          c.er = side(c.R, t.r, c.er, t.xr0, ya, t.xr1, yb);
+          t.ch = c;
+        } else {
+          t.ch = { L: [t.xl0, ya, t.xl1, yb], R: [t.xr0, ya, t.xr1, yb], el: t.l, er: t.r };
+          chains.push(t.ch);
+        }
+      }
+      prev = cur; prevY = yb;
+    }
+    const out = [];
+    for (const c of chains) {
+      const p = c.L.slice();
+      for (let i = c.R.length - 2; i >= 0; i -= 2) p.push(c.R[i], c.R[i + 1]);
+      const q = [];                                      // drop repeated points (pointed tops and bottoms)
+      for (let i = 0; i < p.length; i += 2) if (!q.length || p[i] !== q[q.length - 2] || p[i + 1] !== q[q.length - 1]) q.push(p[i], p[i + 1]);
+      while (q.length >= 4 && q[0] === q[q.length - 2] && q[1] === q[q.length - 1]) q.length -= 2;
+      if (q.length >= 6) out.push(q);
+    }
+    return out;
+  };
+
+  /* ------------------------------------------------------------ fills */
+  /* Gratings and lattices are worked out in a frame turned by angleDeg: u runs along the lines (or the
+     lattice rows), v across them: u = x cos a + y sin a, v = -x sin a + y cos a. The angle turns from +x
+     toward +y of the input coordinates (y down in a LayerSet: clockwise on screen); 0 = lines along x.
+     Every pattern is phase-locked to (0, 0), so neighbouring regions with the same settings line up.
+     Nothing is ever tested per line point or per site: each line or lattice row is one sweep step. */
+  function stripSweep(loops, c, s) {
+    const E = [];
+    let vmin = Infinity, vmax = -Infinity;
+    for (const p of loops) {
+      const n = p.length / 2;
+      if (n < 3) continue;
+      for (let i = 0; i < n; i++) {
+        const j = (i + 1) % n, ua = p[i * 2] * c + p[i * 2 + 1] * s, va = -p[i * 2] * s + p[i * 2 + 1] * c;
+        const ub = p[j * 2] * c + p[j * 2 + 1] * s, vb = -p[j * 2] * s + p[j * 2 + 1] * c;
+        E.push(va <= vb ? { v0: va, v1: vb, u0: ua, u1: ub } : { v0: vb, v1: va, u0: ub, u1: ua });
+        if (va < vmin) vmin = va; if (va > vmax) vmax = va;
+      }
+    }
+    E.sort((a, b) => a.v0 - b.v0);
+    const uAt = (e, v) => v === e.v0 ? e.u0 : v === e.v1 ? e.u1 : e.u0 + (v - e.v0) * (e.u1 - e.u0) / (e.v1 - e.v0);
+    let next = 0, act = [];
+    /* Where the band lo <= v <= hi lies inside the region, keeping pad from its boundary: the even-odd
+       inside spans of the centre line v = vc, minus the u-range of every edge passing through the open
+       band, each widened by pad. A rectangle [u0, u1] x [lo, hi] from the result has no boundary inside it
+       and its centre line inside, so it is inside (with pad to spare when lo, hi were widened by pad).
+       Calls must come in non-decreasing lo. Returns [u0, u1, u0, u1, ...], sorted. */
+    function runs(vc, lo, hi, pad) {
+      while (next < E.length && E[next].v0 <= hi) act.push(E[next++]);
+      act = act.filter(e => e.v1 > lo);
+      const xs = [], bad = [];
+      for (const e of act) {
+        if (e.v0 <= vc && vc < e.v1) xs.push(uAt(e, vc));
+        const a = Math.max(e.v0, lo), b = Math.min(e.v1, hi);
+        if (e.v0 === e.v1 ? lo < e.v0 && e.v0 < hi : a < b) {
+          const ua = e.v0 === e.v1 ? e.u0 : uAt(e, a), ub = e.v0 === e.v1 ? e.u1 : uAt(e, b);
+          bad.push([Math.min(ua, ub) - pad, Math.max(ua, ub) + pad]);
+        }
+      }
+      xs.sort((a, b) => a - b);
+      bad.sort((a, b) => a[0] - b[0]);
+      const M = [];                                      // merged forbidden ranges
+      for (const r of bad) { if (M.length && r[0] <= M[M.length - 1][1]) { if (r[1] > M[M.length - 1][1]) M[M.length - 1][1] = r[1]; } else M.push(r); }
+      const out = [];
+      let m = 0;
+      for (let q = 0; q + 1 < xs.length; q += 2) {
+        const a = xs[q], b = xs[q + 1];
+        while (m < M.length && M[m][1] <= a) m++;
+        let cur = a;
+        for (let k = m; k < M.length && M[k][0] < b; k++) { if (M[k][0] > cur) out.push(cur, M[k][0]); if (M[k][1] > cur) cur = M[k][1]; }
+        if (cur < b) out.push(cur, b);
+      }
+      return out;
+    }
+    return { runs, vmin, vmax, empty: !E.length };
+  }
+
+  // Strips from + k*period <= v <= from + k*period + width, clipped as described above, as rectangles.
+  function strips(loops, period, from, width, o) {
+    const a = (o.angleDeg || 0) * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+    const inset = Math.max(0, o.edgeInset || 0), minLen = Math.max(0, o.minLength || 0), out = [];
+    const S = stripSweep(loops, c, s);
+    if (!(period > 0) || !(width > 0) || S.empty) return out;
+    const k0 = Math.floor((S.vmin - from - width - inset) / period), k1 = Math.ceil((S.vmax - from + inset) / period);
+    if (k1 - k0 > 2e7) throw new Error(`A grating of period ${period} over this region would have ${k1 - k0} lines`);
+    for (let k = k0; k <= k1; k++) {
+      const v0 = from + k * period, v1 = v0 + width, r = S.runs((v0 + v1) / 2, v0 - inset, v1 + inset, inset);
+      for (let q = 0; q < r.length; q += 2) {
+        const u0 = r[q], u1 = r[q + 1];
+        if (u1 - u0 <= 0 || u1 - u0 < minLen) continue;
+        out.push(u0 * c - v0 * s, u0 * s + v0 * c, u1 * c - v0 * s, u1 * s + v0 * c, u1 * c - v1 * s, u1 * s + v1 * c, u0 * c - v1 * s, u0 * s + v1 * c);
+      }
+    }
+    const loopsOut = [];
+    for (let i = 0; i < out.length; i += 8) loopsOut.push(out.slice(i, i + 8));
+    return loopsOut;
+  }
+
+  /* Line grating inside the even-odd region of loops: lines of `width` every `period`, line k covering
+     k*period + phase <= v <= k*period + phase + width (v across the lines, see above). Each line keeps
+     the parts where its whole width is inside the region with edgeInset to spare (so neighbouring regions
+     keep a gap), parts shorter than minLength are dropped. Returns rectangles as loops, same units. */
+  X.fillGrating = function (loops, o) {
+    return strips(loops, o.period, o.phase || 0, o.width, o);
+  };
+  /* Staircase (blazed) grating: `steps` strips per period, step j covering
+     [k*period + j*period/steps, k*period + (j+1)*period/steps] across the lines, clipped as in fillGrating.
+     Returns one loop list per step (the caller gives each its own dose). */
+  X.blazedGrating = function (loops, o) {
+    const n = Math.max(1, Math.round(o.steps || 2)), w = o.period / n, out = [];
+    for (let j = 0; j < n; j++) out.push(strips(loops, o.period, (o.phase || 0) + j * w, w, o));
+    return out;
+  };
+  /* Lattice sites inside the even-odd region of loops, as runs along the lattice rows:
+     [{x, y, dx, dy, n}] = n sites at (x + m*dx, y + m*dy), m = 0..n-1 (a GDS AREF with rows = 1).
+     Square lattice: sites (i*pitch, j*pitch) in the turned frame; hex: rows pitch*sqrt(3)/2 apart, odd rows
+     shifted by pitch/2. A site is kept when the square of half-size keepOut around it (in the turned frame)
+     is entirely inside the region. runs.sites = total number of sites. */
+  X.fillLattice = function (loops, o) {
+    const pitch = o.pitch, hex = o.lattice === 'hex', a = (o.angleDeg || 0) * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+    const ko = Math.max(0, o.keepOut || 0), h = hex ? pitch * Math.sqrt(3) / 2 : pitch, out = [];
+    out.sites = 0;
+    const S = stripSweep(loops, c, s);
+    if (!(pitch > 0) || S.empty) return out;
+    const j0 = Math.ceil(S.vmin / h), j1 = Math.floor(S.vmax / h);
+    if (j1 - j0 > 2e7) throw new Error(`A lattice of pitch ${pitch} over this region would have ${j1 - j0} rows`);
+    const dx = pitch * c, dy = pitch * s;
+    for (let j = j0; j <= j1; j++) {
+      const v = j * h, off = hex && (j & 1) ? pitch / 2 : 0, r = S.runs(v, v - ko, v + ko, ko);
+      let last = null, lastI = 0;
+      for (let q = 0; q < r.length; q += 2) {
+        const i0 = Math.ceil((r[q] - off) / pitch), i1 = Math.floor((r[q + 1] - off) / pitch);
+        if (i1 < i0) continue;
+        out.sites += i1 - i0 + 1;
+        if (last && lastI + 1 === i0) { last.n += i1 - i0 + 1; lastI = i1; continue; }
+        const u = i0 * pitch + off;
+        last = { x: u * c - v * s, y: u * s + v * c, dx, dy, n: i1 - i0 + 1 }; lastI = i1;
+        out.push(last);
+      }
+    }
+    return out;
+  };
+  // Regular n-gon (default 32) approximating a circle, counter-clockwise in x-right y-up terms.
+  X.circleLoop = function (cx, cy, r, n) {
+    n = Math.max(3, n || 32);
+    const o = [];
+    for (let i = 0; i < n; i++) { const t = 2 * Math.PI * i / n; o.push(cx + r * Math.cos(t), cy + r * Math.sin(t)); }
+    return o;
+  };
+
   /* ------------------------------------------------------------ GDSII */
   // GDSII 8-byte real: sign bit, 7-bit excess-64 base-16 exponent, 56-bit mantissa.
   function real8(v) {
@@ -164,6 +392,8 @@
       bgnstr: d => rec(0x05, 0x02, int2(d.concat(d))),
       strname: s => rec(0x06, 0x06, ascii(s)),
       boundary: (layer, dt, xy) => { rec(0x08, 0x00); rec(0x0D, 0x02, int2([layer])); rec(0x0E, 0x02, int2([dt])); rec(0x10, 0x03, int4(xy)); rec(0x11, 0x00); },
+      sref: (name, xy) => { rec(0x0A, 0x00); rec(0x12, 0x06, ascii(name)); rec(0x10, 0x03, int4(xy)); rec(0x11, 0x00); },
+      aref: (name, cols, rows, xy) => { rec(0x0B, 0x00); rec(0x12, 0x06, ascii(name)); rec(0x13, 0x02, int2([cols, rows])); rec(0x10, 0x03, int4(xy)); rec(0x11, 0x00); },
       text: (layer, x, y, s) => { rec(0x0C, 0x00); rec(0x0D, 0x02, int2([layer])); rec(0x16, 0x02, int2([0])); rec(0x10, 0x03, int4([x, y])); rec(0x19, 0x06, ascii(s)); rec(0x11, 0x00); },
       endstr: () => rec(0x07, 0x00),
       endlib: () => rec(0x04, 0x00),
@@ -171,40 +401,107 @@
     };
   }
 
-  /* LayerSet -> GDSII bytes. One top cell; sheet i (bottom = 1) goes on layer i, datatype 0.
-     Units: 1 database unit = 1 nm, 1 user unit = 1 µm, true physical size. Y is flipped to GDS's y-up.
-     opts: {cellName, layerOf(i) -> number, labels (bool: a text label per layer outside the art)} */
+  /* LayerSet -> GDSII bytes. One top cell; sheet i (bottom = 1) goes on layer i, datatype 0, unless the
+     layer gives gdsLayer / gdsDatatype. Units: 1 database unit = 1 nm, 1 user unit = 1 µm, true physical
+     size from set.unitNm (default inches). Y is flipped to GDS's y-up; set.origin picks where (0, 0) lands.
+     set.cells {NAME: {polygons: [loops, cell-local units, even-odd], layer, datatype}} become structures
+     written before the top cell (layer/datatype default to the first set layer that places them).
+     layer.refs [{cell, x, y, dx, dy, cols, rows, rx, ry}] place a cell cols x rows times: site (c, r) at
+     (x + c*dx + r*rx, y + c*dy + r*ry) in set units, written as AREF (SREF for a single site). They go
+     through the same transform as polygons, so on a y-down set a step (dx, dy) becomes (dx, -dy) nm*unitNm
+     in the file. AREF steps are integers in the file: a step that isn't a whole number of database units
+     (after grid snapping) drifts, so arrays are cut into pieces whose sites stay within opts.arrayTol
+     (database units, default = grid) of their exact place, on top of rounding each piece's origin to the
+     grid. Integer steps (e.g. a 300 nm pitch at 0°) never cut; a 300 nm pitch at 7° (step 297.76 nm) gives
+     arrays of 3 at the default, so pass a larger arrayTol or pick such angles knowingly. Arrays are also
+     cut at 32767 columns/rows.
+     opts: {cellName, layerOf(i) -> number, labels (bool: a text label per layer outside the art),
+            grid (database units: snap every coordinate to multiples of it; collapsed polygons are dropped),
+            holes: 'keyhole' (default: holes joined to the outline by slits) | 'split' (X.trapezoids, no slits),
+            arrayTol} */
   X.gds = function (set, opts) {
     opts = opts || {};
     const MAX_PTS = 8000;   // XY record limit is 8191 points including the closing one
+    const u = unitNmOf(set), grid = Math.max(1, Math.round(opts.grid || 1)), split = opts.holes === 'split';
+    const q = grid > 1 ? v => Math.round(v / grid) * grid : Math.round;
     const b = set.bounds, ox = set.origin === 'center' ? (b[0] + b[2]) / 2 : b[0], oy = set.origin === 'center' ? (b[1] + b[3]) / 2 : b[3];
-    const T = (x, y) => [Math.round((x - ox) * NM_PER_IN), Math.round((oy - y) * NM_PER_IN)];
+    const T = (x, y) => [q((x - ox) * u), q((oy - y) * u)];
     const now = new Date(), d = [now.getFullYear(), now.getMonth() + 1, now.getDate(), now.getHours(), now.getMinutes(), now.getSeconds()];
     const w = GdsWriter();
     w.header(); w.bgnlib(d); w.libname(gdsName(set.name || 'LAYERS') + '.DB'); w.units(1e-3, 1e-9);
-    w.bgnstr(d); w.strname(gdsName(opts.cellName || set.name || 'TOP'));
-    const stats = [];
-    set.layers.forEach((L, i) => {
-      const layerNo = opts.layerOf ? opts.layerOf(i) : i + 1;
+    const nums = gdsNumbers(set, opts), used = new Set(), topName = uniqueName(gdsName(opts.cellName || set.name || 'TOP'), used);
+
+    // even-odd loops -> boundaries on one layer/datatype; returns [polygons, points]
+    const emit = (loops, layerNo, dt, Tf, what) => {
       let polys = 0, pts = 0;
-      for (const pc of X.loopsToPieces(L.loops)) {
-        for (const part of X.splitLarge(X.keyhole(pc), MAX_PTS)) {
-          const xy = [];
-          let px = null, py = null;
-          for (let k = 0; k < part.length; k += 2) {
-            const [x, y] = T(part[k], part[k + 1]);
-            if (x === px && y === py) continue;      // rounding can merge neighbours
-            xy.push(x, y); px = x; py = y;
+      for (const pc of X.loopsToPieces(loops)) {
+        for (const whole of split ? X.trapezoids(pc, MAX_PTS) : [X.keyhole(pc)]) {
+          for (const part of X.splitLarge(whole, MAX_PTS)) {
+            const xy = [];
+            let px = null, py = null;
+            for (let k = 0; k < part.length; k += 2) {
+              const [x, y] = Tf(part[k], part[k + 1]);
+              if (x === px && y === py) continue;      // rounding can merge neighbours
+              xy.push(x, y); px = x; py = y;
+            }
+            while (xy.length >= 4 && xy[0] === xy[xy.length - 2] && xy[1] === xy[xy.length - 1]) xy.length -= 2;
+            if (xy.length < 6) continue;
+            let a2 = 0;                                  // collapsed to a line by rounding or snapping: drop
+            for (let k = 0; k < xy.length; k += 2) { const k2 = (k + 2) % xy.length; a2 += xy[k] * xy[k2 + 1] - xy[k2] * xy[k + 1]; }
+            if (a2 === 0) continue;
+            if (xy.length / 2 > 8190) throw new Error(`${what}: a polygon kept ${xy.length / 2} points after splitting`);
+            xy.push(xy[0], xy[1]);
+            w.boundary(layerNo, dt, xy); polys++; pts += xy.length / 2;
           }
-          if (xy.length >= 2 && xy[0] === xy[xy.length - 2] && xy[1] === xy[xy.length - 1]) xy.length -= 2;
-          if (xy.length < 6) continue;
-          if (xy.length / 2 > 8190) throw new Error(`Layer ${L.name}: a polygon kept ${xy.length / 2} points after splitting`);
-          xy.push(xy[0], xy[1]);
-          w.boundary(layerNo, 0, xy); polys++; pts += xy.length / 2;
         }
       }
-      if (opts.labels) { const [x, y] = T(b[0], b[3] + 0.15 + i * 0.12); w.text(layerNo, x, y, `L${layerNo} ${L.name}`); }
-      stats.push({ layer: layerNo, name: L.name, polygons: polys, points: pts });
+      return [polys, pts];
+    };
+
+    // structure cells first: cell-local coordinates, same scale and y flip, no origin shift
+    const cells = set.cells || {}, cellName = {};
+    for (const key of Object.keys(cells)) {
+      const C = cells[key], dflt = cellDefaults(set, nums, key);
+      cellName[key] = uniqueName(gdsName(key), used);
+      w.bgnstr(d); w.strname(cellName[key]);
+      emit(C.polygons || [], C.layer != null ? C.layer : dflt[0], C.datatype != null ? C.datatype : dflt[1], (x, y) => [q(x * u), q(-y * u)], 'Cell ' + key);
+      w.endstr();
+    }
+
+    const tol = opts.arrayTol != null ? opts.arrayTol : grid;
+    const place = r => {   // one ref -> AREF/SREF records; returns [records, instances]
+      const name = cellName[r.cell];
+      if (!name) throw new Error(`Reference to unknown cell "${r.cell}"`);
+      const cols = Math.max(1, Math.round(r.cols || 1)), rows = Math.max(1, Math.round(r.rows || 1));
+      const X0 = (r.x - ox) * u, Y0 = (oy - r.y) * u;                       // exact, database units
+      const cv = [(r.dx || 0) * u, -(r.dy || 0) * u], rv = [(r.rx || 0) * u, -(r.ry || 0) * u];
+      const ci = cv.map(q), ri = rv.map(q);
+      const run = (n, e, ei) => { const err = Math.hypot(ei[0] - e[0], ei[1] - e[1]); return Math.min(32767, n, err > 0 ? Math.floor(tol / 2 / err) + 1 : n); };
+      const nc = run(cols, cv, ci), nr = run(rows, rv, ri);
+      // a 1-long direction still needs a non-zero vector in the file
+      const cvec = ci[0] || ci[1] ? ci : ri[0] || ri[1] ? [-ri[1], ri[0]] : [grid, 0];
+      const rvec = ri[0] || ri[1] ? ri : [-cvec[1], cvec[0]];
+      let recs = 0;
+      for (let c0 = 0; c0 < cols; c0 += nc) for (let r0 = 0; r0 < rows; r0 += nr) {
+        const mc = Math.min(nc, cols - c0), mr = Math.min(nr, rows - r0);
+        const px = q(X0 + c0 * cv[0] + r0 * rv[0]), py = q(Y0 + c0 * cv[1] + r0 * rv[1]);
+        if (mc === 1 && mr === 1) w.sref(name, [px, py]);
+        else w.aref(name, mc, mr, [px, py, px + mc * cvec[0], py + mc * cvec[1], px + mr * rvec[0], py + mr * rvec[1]]);
+        recs++;
+      }
+      return [recs, cols * rows];
+    };
+
+    w.bgnstr(d); w.strname(topName);
+    const stats = [];
+    const lab = u === NM_PER_IN ? [0.15, 0.12] : [0.05, 0.04].map(f => f * Math.max(b[2] - b[0], b[3] - b[1]));
+    set.layers.forEach((L, i) => {
+      const [layerNo, dt] = nums[i];
+      const [polys, pts] = emit(L.loops || [], layerNo, dt, T, 'Layer ' + L.name);
+      let refs = 0, instances = 0;
+      for (const r of L.refs || []) { const [n, m] = place(r); refs += n; instances += m; }
+      if (opts.labels) { const [x, y] = T(b[0], b[3] + lab[0] + i * lab[1]); w.text(layerNo, x, y, `L${layerNo} ${L.name}`); }
+      stats.push({ layer: layerNo, datatype: dt, name: L.name, polygons: polys, points: pts, refs, instances });
     });
     w.endstr(); w.endlib();
     const bytes = w.bytes();
@@ -213,22 +510,49 @@
   };
   const gdsName = s => (String(s).toUpperCase().replace(/[^A-Z0-9_$?]+/g, '_').replace(/^_+|_+$/g, '') || 'TOP').slice(0, 32);
   X.gdsName = gdsName;
+  function uniqueName(n, used) {
+    let s = n;
+    for (let k = 2; used.has(s); k++) s = n.slice(0, 31 - String(k).length) + '_' + k;
+    used.add(s); return s;
+  }
+  // [layer, datatype] for every set layer: the layer's own gdsLayer/gdsDatatype, else layerOf(i) or i + 1, and 0.
+  function gdsNumbers(set, opts) {
+    const num = (v, what, L) => {
+      if (!Number.isInteger(v) || v < 0 || v > 255) throw new Error(`Layer ${L.name}: ${what} must be a whole number from 0 to 255 (got ${v})`);
+      return v;
+    };
+    return set.layers.map((L, i) => [
+      L.gdsLayer != null ? num(L.gdsLayer, 'gdsLayer', L) : opts && opts.layerOf ? opts.layerOf(i) : i + 1,
+      L.gdsDatatype != null ? num(L.gdsDatatype, 'gdsDatatype', L) : 0]);
+  }
+  // A cell without its own layer/datatype takes those of the first set layer that places it (else 1/0).
+  function cellDefaults(set, nums, key) {
+    const i = set.layers.findIndex(L => (L.refs || []).some(r => r.cell === key));
+    return i >= 0 ? nums[i] : [1, 0];
+  }
 
-  /* KLayout layer properties: names and paper colors for each GDS layer.
+  /* KLayout layer properties: names and paper colors for each GDS layer/datatype, the same numbers X.gds
+     writes (cells on a layer/datatype no set layer uses get their own entry).
      In KLayout: File > Load Layer Properties, or put it next to the .gds with the same name. */
   X.lyp = function (set, opts) {
     opts = opts || {};
     const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const entry = (n, dt, name, hex) => ' <properties>\n' +
+      `  <frame-color>${hex}</frame-color>\n  <fill-color>${hex}</fill-color>\n` +
+      '  <frame-brightness>-40</frame-brightness>\n  <fill-brightness>0</fill-brightness>\n' +
+      '  <dither-pattern>I0</dither-pattern>\n  <line-style/>\n  <valid>true</valid>\n  <visible>true</visible>\n' +
+      '  <transparent>false</transparent>\n  <width>1</width>\n  <marked>false</marked>\n  <xfill>false</xfill>\n  <animation>0</animation>\n' +
+      `  <name>${esc(String(n).padStart(2, '0') + (dt ? '/' + dt : '') + ' ' + name)}</name>\n  <source>${n}/${dt}@1</source>\n </properties>\n`;
+    const nums = gdsNumbers(set, opts), seen = new Set();
     let s = '<?xml version="1.0" encoding="utf-8"?>\n<layer-properties>\n';
-    set.layers.forEach((L, i) => {
-      const n = opts.layerOf ? opts.layerOf(i) : i + 1;
-      s += ' <properties>\n' +
-        `  <frame-color>${L.hex}</frame-color>\n  <fill-color>${L.hex}</fill-color>\n` +
-        '  <frame-brightness>-40</frame-brightness>\n  <fill-brightness>0</fill-brightness>\n' +
-        '  <dither-pattern>I0</dither-pattern>\n  <line-style/>\n  <valid>true</valid>\n  <visible>true</visible>\n' +
-        '  <transparent>false</transparent>\n  <width>1</width>\n  <marked>false</marked>\n  <xfill>false</xfill>\n  <animation>0</animation>\n' +
-        `  <name>${esc(String(n).padStart(2, '0') + ' ' + L.name)}</name>\n  <source>${n}/0@1</source>\n </properties>\n`;
-    });
+    set.layers.forEach((L, i) => { s += entry(nums[i][0], nums[i][1], L.name, L.hex); seen.add(nums[i].join('/')); });
+    for (const key of Object.keys(set.cells || {})) {
+      const C = set.cells[key], dflt = cellDefaults(set, nums, key), n = C.layer != null ? C.layer : dflt[0], dt = C.datatype != null ? C.datatype : dflt[1];
+      if (seen.has(n + '/' + dt)) continue;
+      seen.add(n + '/' + dt);
+      const user = set.layers.find(L => (L.refs || []).some(r => r.cell === key));
+      s += entry(n, dt, 'cell ' + gdsName(key), user ? user.hex : '#808080');
+    }
     return s + '</layer-properties>\n';
   };
 
@@ -268,11 +592,18 @@
   }
   X.Scanner = Scanner;
 
-  // Pixel frame for a LayerSet at a given dpi.
+  /* Pixel frame for a LayerSet at a given dpi: really pixels per coordinate unit, which is dpi for inch
+     sets. For other units, X.physDpi(set, ppu) gives the dpi to record in the image files. */
   X.frame = function (set, dpi, mirror) {
     const b = set.bounds;
     return { x0: b[0], y0: b[1], dpi, width: Math.max(1, Math.round((b[2] - b[0]) * dpi)), height: Math.max(1, Math.round((b[3] - b[1]) * dpi)), mirror: !!mirror };
   };
+  // Pixel frame with square pixels of pixelNm nanometres.
+  X.frameForPixel = (set, pixelNm, mirror) => X.frame(set, unitNmOf(set) / pixelNm, mirror);
+  /* Pixels per metre for the PNG/BMP headers: opts.ppm when given, else from opts.dpi without going through
+     0.0254 (10 nm pixels = 2.54e6 dpi = exactly 1e8 px/m). */
+  const ppmOf = o => o.ppm > 0 ? Math.round(o.ppm) : Math.round((o.dpi || 72) * 1e4 / 254);
+  X._ppm = ppmOf;
 
   /* Row sources. Each returns {width, height, rowBytes, row(j) -> Uint8Array} for one image kind.
      - mask:  1 bit per pixel, MSB first, bit set where the layer has paper (invert flips it).
@@ -355,7 +686,7 @@
         out.push(...chunk('tRNS', tr));
       }
     }
-    if (opts.dpi) { const ppm = Math.round(opts.dpi / 0.0254), p = new Uint8Array(9); new DataView(p.buffer).setUint32(0, ppm); new DataView(p.buffer).setUint32(4, ppm); p[8] = 1; out.push(...chunk('pHYs', p)); }
+    if (opts.dpi || opts.ppm) { const ppm = Math.min(0xffffffff, ppmOf(opts)), p = new Uint8Array(9); new DataView(p.buffer).setUint32(0, ppm); new DataView(p.buffer).setUint32(4, ppm); p[8] = 1; out.push(...chunk('pHYs', p)); }
     if (opts.text) for (const [k, v] of Object.entries(opts.text)) { const s = k + '\0' + String(v).replace(/[^\x20-\x7e\n]/g, '?'); out.push(...chunk('tEXt', Uint8Array.from(s, c => c.charCodeAt(0)))); }
 
     const cs = new CompressionStream('deflate'), writer = cs.writable.getWriter();
@@ -424,8 +755,9 @@
     tags.push([277, 3, 1, spp]);
     tags.push([278, 4, 1, rowsPerStrip]);
     tags.push([279, 4, strips.length, { longs: strips.map(s => s.length) }]);
-    tags.push([282, 5, 1, { rational: opts.dpi || 72 }]);
-    tags.push([283, 5, 1, { rational: opts.dpi || 72 }]);
+    const dpi = opts.ppm > 0 ? opts.ppm * 0.0254 : opts.dpi || 72;
+    tags.push([282, 5, 1, { rational: dpi }]);
+    tags.push([283, 5, 1, { rational: dpi }]);
     tags.push([284, 3, 1, 1]);
     tags.push([296, 3, 1, 2]);
     tags.push([305, 2, soft.length, { bytes: soft }]);
@@ -442,7 +774,10 @@
       if (v.offsets) { if (count === 1) { dv.setUint32(p + 8, stripOff[0], true); return; } bytes = new Uint8Array(count * 4); const d2 = new DataView(bytes.buffer); stripOff.forEach((o, k) => d2.setUint32(k * 4, o, true)); }
       else if (v.longs) { if (count === 1) { dv.setUint32(p + 8, v.longs[0], true); return; } bytes = new Uint8Array(count * 4); const d2 = new DataView(bytes.buffer); v.longs.forEach((o, k) => d2.setUint32(k * 4, o, true)); }
       else if (v.shorts) { bytes = new Uint8Array(v.shorts.length * 2); const d2 = new DataView(bytes.buffer); v.shorts.forEach((o, k) => d2.setUint16(k * 2, o, true)); }
-      else if (v.rational) { bytes = new Uint8Array(8); const d2 = new DataView(bytes.buffer); d2.setUint32(0, Math.round(v.rational * 1000), true); d2.setUint32(4, 1000, true); }
+      else if (v.rational) {   // n/1000, with a smaller denominator when n would overflow (nm-sized pixels)
+        let den = 1000; while (den > 1 && v.rational * den > 0xffffffff) den /= 10;
+        bytes = new Uint8Array(8); const d2 = new DataView(bytes.buffer); d2.setUint32(0, Math.min(0xffffffff, Math.round(v.rational * den)), true); d2.setUint32(4, den, true);
+      }
       else if (v.bytes) { if (v.bytes.length <= 4) { ifd.set(v.bytes, p + 8); return; } bytes = v.bytes; }
       dv.setUint32(p + 8, extraOff, true); extras.push(bytes); extraOff += bytes.length; if (extraOff & 1) { extras.push(new Uint8Array(1)); extraOff++; }
     });
@@ -467,7 +802,7 @@
     head[0] = 0x42; head[1] = 0x4d; dv.setUint32(2, fileSize, true); dv.setUint32(10, offset, true);
     dv.setUint32(14, 40, true); dv.setInt32(18, rows.width, true); dv.setInt32(22, rows.height, true);
     dv.setUint16(26, 1, true); dv.setUint16(28, bpp, true); dv.setUint32(30, 0, true); dv.setUint32(34, dataSize, true);
-    const ppm = Math.round((opts.dpi || 72) / 0.0254); dv.setInt32(38, ppm, true); dv.setInt32(42, ppm, true);
+    const ppm = Math.min(0x7fffffff, ppmOf(opts)); dv.setInt32(38, ppm, true); dv.setInt32(42, ppm, true);   // int32: fine down to ~0.5 nm pixels
     dv.setUint32(46, palette.length, true); dv.setUint32(50, 0, true);
     palette.forEach((c, i) => { head[54 + i * 4] = c[2]; head[55 + i * 4] = c[1]; head[56 + i * 4] = c[0]; });
     const lines = new Array(rows.height);
@@ -484,13 +819,14 @@
 
   /* ------------------------------------------------------------ manifest */
   X.manifest = function (set, info) {
-    const f = info.frame;
+    const f = info.frame, u = unitNmOf(set), dpi = X.physDpi(set, f.dpi), nums = gdsNumbers(set);
     return JSON.stringify({
       generator: 'Cutography', created: new Date().toISOString(), project: set.name,
-      dpi: f.dpi, inchesPerPixel: 1 / f.dpi, micrometresPerPixel: 25400 / f.dpi, widthPx: f.width, heightPx: f.height,
-      widthIn: f.width / f.dpi, heightIn: f.height / f.dpi, mirrored: f.mirror, inverted: !!info.invert,
-      boundsIn: set.bounds, note: 'Pixel (0,0) is the top-left of boundsIn. Layers are listed bottom to top; in label images pixel value = layer number of the top-most layer, 0 = no paper.',
-      layers: set.layers.map((L, i) => ({ number: i + 1, id: L.id, name: L.name, paper: L.paper || L.name, hex: L.hex, gdsLayer: i + 1, files: (info.files && info.files[i]) || [] }))
+      dpi, inchesPerPixel: 1 / dpi, micrometresPerPixel: 25400 / dpi, nanometresPerPixel: u / f.dpi, widthPx: f.width, heightPx: f.height,
+      widthIn: f.width / dpi, heightIn: f.height / dpi, mirrored: f.mirror, inverted: !!info.invert,
+      boundsIn: u === NM_PER_IN ? set.bounds : set.bounds.map(v => v * u / NM_PER_IN), unitNm: u,
+      note: 'Pixel (0,0) is the top-left of boundsIn. Layers are listed bottom to top; in label images pixel value = layer number of the top-most layer, 0 = no paper.',
+      layers: set.layers.map((L, i) => ({ number: i + 1, id: L.id, name: L.name, paper: L.paper || L.name, hex: L.hex, gdsLayer: nums[i][0], gdsDatatype: nums[i][1], files: (info.files && info.files[i]) || [] }))
     }, null, 1);
   };
 

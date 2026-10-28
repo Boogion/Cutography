@@ -21,6 +21,15 @@
   .out { padding: 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); font-size: 13.5px; display: grid; gap: 4px; }
   .out b { font-size: 14px; }
   .out span { color: var(--muted); }
+  .modes { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
+  .modecard { position: relative; display: grid; gap: 6px; padding: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
+  .modecard:hover { border-color: var(--ink); }
+  .modecard input { position: absolute; opacity: 0; pointer-events: none; }
+  .modecard.on { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  .modecard b { font-family: var(--font-display); font-size: 17px; }
+  .modecard span { color: var(--muted); font-size: 13px; }
+  .modecard i { font-style: normal; font-size: 12px; color: var(--accent); }
+  .stepq { font-family: var(--font-display); font-size: 20px; margin-bottom: 10px; }
   .warnbox { padding: 12px 14px; border: 1px solid var(--warn); border-radius: 8px; color: var(--ink); background: var(--panel); font-size: 14px; }
   footer.credits { color: var(--muted); font-size: 12px; }
   footer.credits a { color: inherit; }
@@ -37,6 +46,18 @@
     You opened this page straight from the folder. The photo tool works, but example photos and the map tool need the app running: double-click <b>Cutography</b> (or <code>start.bat</code> / <code>start.command</code>), then use the page it opens.
   </div>
 
+  <section>
+    <h2 class="stepq">1. What are you making?</h2>
+    <div class="modes" role="radiogroup" aria-label="What are you making">
+      <label class="modecard"><input type="radio" name="mode" value="paper"><b>Paper stack</b><span>Cardstock layers for Cricut Design Space or a laser cutter.</span><i>SVG · PNG · laser</i></label>
+      <label class="modecard"><input type="radio" name="mode" value="grayscale"><b>Grayscale relief</b><span>8 or 16 dose levels for grayscale electron-beam lithography: heights in resist, or depths after etching.</span><i>GDS · BMP · dose table for BEAMER</i></label>
+      <label class="modecard"><input type="radio" name="mode" value="color"><b>Structural color</b><span>Every color is a nanostructure: gratings, TiO₂ or Si pillars, metal nanodisks, or film thickness.</span><i>GDS with structures · region masks</i></label>
+      <label class="modecard"><input type="radio" name="mode" value="layers"><b>Layers only</b><span>Plain layers at true size for your own pipeline.</span><i>GDS · masks · label maps</i></label>
+    </div>
+    <p class="note" id="modeNote" style="margin-top:8px"></p>
+  </section>
+
+  <h2 class="stepq" style="margin-bottom:-14px">2. Start from…</h2>
   <section class="choices">
     <a class="choice" href="photo.html">
       <svg viewBox="0 0 300 150" aria-hidden="true">
@@ -68,6 +89,8 @@
     <div class="outs">
       <div class="out"><b>Cricut</b><span>One SVG with every layer for Design Space, plus per-layer SVGs or PNGs and a Print Then Cut image.</span></div>
       <div class="out"><b>KLayout</b><span>A GDSII layout at true size, one layer number per sheet, with a layer file that names each sheet and shows its paper color.</span></div>
+      <div class="out"><b>Grayscale EBL</b><span>Non-overlapping dose levels as GDS (datatype or layer per level, keyhole or hole-free) or a grayscale BMP at your pixel size, plus a dose table and the recipe, for BEAMER.</span></div>
+      <div class="out"><b>Structural color</b><span>Regions filled with gratings or pillar arrays checked against your process limits, region masks to fill yourself, and a table of every structure.</span></div>
       <div class="out"><b>High-res images</b><span>Black-and-white layer masks, a color composite and a label map at up to 4800 dpi, as PNG, TIFF or BMP, with a scale file.</span></div>
     </div>
   </section>
@@ -80,6 +103,27 @@
 </main>
 <script>
   if (location.protocol === 'file:') document.getElementById('noServer').hidden = false;
+  // The mode chosen here travels to the tools as ?mode= and is remembered for next time.
+  (function () {
+    const notes = {
+      paper: 'Both tools then ask which paper you have.',
+      grayscale: 'Both tools then ask for your process (resist only or etch), resist, depth range and 8 or 16 levels.',
+      color: 'Both tools then ask for your process (resist, lift-off, etch or TiO₂) and limits, and offer only the structures it can make.',
+      layers: 'Both tools then ask for the true size and your smallest feature.'
+    };
+    let mode = 'paper';
+    try { mode = localStorage.getItem('cutography.mode') || 'paper'; } catch (e) { /* private mode */ }
+    const radios = document.querySelectorAll('input[name="mode"]');
+    function set(m) {
+      mode = m;
+      radios.forEach(r => { r.checked = r.value === m; r.parentNode.classList.toggle('on', r.value === m); });
+      document.querySelectorAll('.choice').forEach(a => { a.href = a.getAttribute('href').split('?')[0] + '?mode=' + m; });
+      document.getElementById('modeNote').textContent = notes[m];
+      try { localStorage.setItem('cutography.mode', m); } catch (e) { /* private mode */ }
+    }
+    radios.forEach(r => r.addEventListener('change', () => set(r.value)));
+    set(notes[mode] ? mode : 'paper');
+  })();
 </script>
 </body>
 </html>

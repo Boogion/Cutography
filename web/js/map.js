@@ -16,6 +16,11 @@
   const $ = id => document.getElementById(id);
   const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
   const GF = 1 / 48;
+  // What is being made, and for lithography the fabrication recipe (see fab.js).
+  const MODE = window.FabSetup ? FabSetup.startMode() : 'paper';
+  const LITHO = MODE !== 'paper';
+  const recipe = LITHO ? FabSetup.loadRecipe(MODE) : null;
+  const grayLevels = () => LITHO && MODE !== 'layers' && CutFab.isGrayDesign(recipe);
 
   /* ------------------------------------------------------------ settings */
   const S = {
@@ -273,7 +278,22 @@
   }
 
   /* ------------------------------------------------------------ model */
+  // Lithography designs are terrain bands only: no ring, marks, lettering, streets or buildings.
+  function applyLitho() {
+    if (!LITHO) return;
+    Object.assign(S, { ring: 0.02, align: false, gauge: false, fields: false, north: false, lettering: false, roads: false, water: false, mainCount: 0, sns: false, pad: false });
+    if (grayLevels()) S.levels = recipe.levels;
+  }
+  // Sheet colors from the recipe's palette: gray levels, or palette entries spread low to high.
+  function fabSheetColors(N) {
+    const pk = CutFab.palette(recipe), cs = pk ? pk[0].colors : [];
+    return Array.from({ length: N }, (_, i) => {
+      const c = cs.length ? cs[Math.round(i * (cs.length - 1) / Math.max(1, N - 1))] : { name: 'Layer ' + (i + 1), hex: '#cccccc' };
+      return { name: c.name, hex: c.hex, pack: '', material: '', finish: 'structure', structure: c.structure };
+    });
+  }
   function compute() {
+    applyLitho();
     const D = S.wafer === '200' ? 200 / 25.4 : 150 / 25.4;
     // A site is one circle of ground `diameterM` across, filling the wafer; some sites also name fixed frames.
     const F = (SITE.frames && SITE.frames[S.frame]) || { offset: [0, 0], scale: SITE.diameterM / (D * 0.0254) };
@@ -583,7 +603,7 @@
     }
 
     // --- trace sheets
-    const colors = PALETTES[S.palette].sheets(N);
+    const colors = LITHO && MODE !== 'layers' ? fabSheetColors(N) : PALETTES[S.palette].sheets(N);
     const sheets = [];
     for (let s2 = 0; s2 < N; s2++) {
       const holes = new Uint8Array(NN);
@@ -944,9 +964,9 @@
   function renderInfo() {
     const M = MODEL;
     const mc = matCheck(M);
-    $('chipSize').textContent = `${S.wafer} mm · ${M.D.toFixed(2)} in · ${mc.ok ? 'fits the mat' : 'too big for the mat'}`;
-    $('chipSize').className = 'chip ' + (mc.ok ? 'ok' : 'bad');
-    $('chipLayers').textContent = `${allLayers(M).length} cut layers`;
+    if (LITHO) { $('chipSize').textContent = `${CutFab.fmtUm(recipe.fieldUm)} field`; $('chipSize').className = 'chip ' + (recipe.fieldUm <= 100000 ? 'ok' : 'bad'); }
+    else { $('chipSize').textContent = `${S.wafer} mm · ${M.D.toFixed(2)} in · ${mc.ok ? 'fits the mat' : 'too big for the mat'}`; $('chipSize').className = 'chip ' + (mc.ok ? 'ok' : 'bad'); }
+    $('chipLayers').textContent = LITHO ? `${M.sheets.length} ${grayLevels() ? 'levels' : 'regions'}` : `${allLayers(M).length} cut layers`;
     $('intervalOut').textContent = `${Math.round(M.interval)} m interval · ${Math.round(M.eMin)}–${Math.round(M.eMax)} m · 1:${Math.round(M.scale).toLocaleString('en-US')}`;
     $('paletteNote').textContent = PALETTES[S.palette].note;
     const L = allLayers(M), hex = uniqueHexes(L), list = $('layerListW'); list.innerHTML = '';
@@ -960,7 +980,10 @@
       row.append(sw, nm, st); list.appendChild(row);
     });
     $('statusW').innerHTML = '';
-    const bits = [
+    const bits = LITHO ? [
+      `${M.N} ${grayLevels() ? 'levels' : 'bands'}, ${Math.round(M.interval)} m of ground each`, M.stats.sea ? 'sea on the lowest level' : null,
+      `layout grid ${((M.k * GF) * recipe.fieldUm / M.D).toFixed(2)} µm`, S.orient === 'grid' ? 'street grid square to the field' : 'north up'
+    ].filter(Boolean) : [
       ...(EXTRA && EXTRA.status ? EXTRA.status(M) : []),
       M.water ? [M.stats.sea ? 'sea' : null, M.stats.lakes ? `${M.stats.lakes} lakes` : null, M.stats.rivers ? `${M.stats.rivers} river segments` : null].filter(Boolean).join(', ') + ' on the water layer' : null,
       `${M.stats.main} buildings`, `${M.stats.roads} streets`, M.fieldCount ? `${M.fieldCount} field marks` : null,
@@ -995,11 +1018,35 @@
       layers: L.map(l => ({ id: l.id, name: l.label.replace(/^\d+ · /, ''), hex: l.color.hex, paper: l.color.name, loops: layerLoops(M, l) }))
     };
   }
+  /* Lithography: one non-overlapping region per terrain band (sheet i minus sheet i+1), traced from the
+     model's masks and scaled so the disc is the field diameter. */
+  function bandLoops(M, i) {
+    const NF = M.NF, NN = NF * NF, m = new Uint8Array(NN), a = M.papers[i], b = M.papers[i + 1];
+    for (let q = 0; q < NN; q++) m[q] = M.innerF[q] && a[q] && !(b && b[q]) ? 1 : 0;
+    const chamfer = S.geom === 'octi' ? M.k / 2 : 0;
+    return E.traceMask(m, NF, NF).map(l => { const o = octi(l, chamfer), out = []; for (let j = 0; j < o.length; j += 2) out.push((o[j] - NF / 2) * GF, (o[j + 1] - NF / 2) * GF); return out; });
+  }
+  function regionSet() {
+    const M = MODEL, um = recipe.fieldUm / M.D, R = M.R * um;
+    const layers = [];
+    M.sheets.forEach((sh, i) => {
+      const loops = bandLoops(M, i);
+      if (!loops.length) return;
+      layers.push({ id: 'band' + (i + 1), name: `${String(i + 1).padStart(2, '0')} · ${sh.name}`, hex: sh.color.hex, structure: grayLevels() && MODE === 'grayscale' ? { kind: 'level', level: i, heightNm: CutFab.levels(recipe)[i].heightNm } : (sh.color.structure || {}), loops: loops.map(l => l.map(v => v * um)) });
+    });
+    return { name: projectName(), unitNm: 1000, bounds: [-R, -R, R, R], origin: 'center', layers };
+  }
   function previewPng(size) {
     const cv = document.createElement('canvas'); cv.width = size; cv.height = size; drawStack(cv, MODEL);
     return new Promise(r => cv.toBlob(r, 'image/png'));
   }
   function exportProvider() {
+    if (LITHO) return {
+      mode: MODE, recipe: () => recipe, regionSet, layerSet: regionSet, project: projectName,
+      size: () => MODEL ? { wIn: recipe.fieldUm / 25400, hIn: recipe.fieldUm / 25400, layers: MODEL.sheets.length } : null,
+      notes: async () => [{ path: 'preview.png', data: await previewPng(1600) }, { path: 'recipe-summary.txt', text: CutFab.summaryText(recipe) }],
+      toast
+    };
     return {
       project: projectName,
       size: () => { if (!MODEL) return null; const b = layerSet().bounds; return { wIn: b[2] - b[0], hIn: b[3] - b[1], layers: allLayers(MODEL).length }; },
@@ -1209,8 +1256,20 @@
     bindNewSite();
   }
   function emptyState(msg) { const e = $('emptyW'); e.hidden = false; e.textContent = msg; $('waferCanvas').hidden = true; }
-  window.MaskSet = { matCheck: () => matCheck(MODEL), S, compute, get model() { return MODEL; }, get site() { return SITE; }, rebuild, openSite, layerSet: () => layerSet(), buildSvg: () => buildSvg(MODEL), drawStack, drawExploded, allLayers: () => allLayers(MODEL), setView(v) { S.view = v; renderPreview(); } };
+  window.MaskSet = { matCheck: () => matCheck(MODEL), S, compute, get model() { return MODEL; }, get site() { return SITE; }, rebuild, openSite, layerSet: () => layerSet(), regionSet: () => regionSet(), recipe, mode: MODE, buildSvg: () => buildSvg(MODEL), drawStack, drawExploded, allLayers: () => allLayers(MODEL), setView(v) { S.view = v; renderPreview(); } };
+  function mountFab() {
+    if (!LITHO) return;
+    document.body.classList.add('litho', 'mode-' + MODE);
+    $('fabSec').hidden = false;
+    document.querySelector('.topbar .sub').textContent = CutFab.MODES[MODE].name + ': real terrain as ' + (grayLevels() ? `${recipe.levels} dose levels` : 'structured regions');
+    $('levelsRow').hidden = grayLevels();
+    FabSetup.mount($('fabSetup'), recipe, {
+      fieldLabel: 'Field diameter', noImage: true,
+      onChange() { FabSetup.saveRecipe(recipe); $('levelsRow').hidden = grayLevels(); rebuild(); if (exportPanel) exportPanel.refresh(); }
+    });
+  }
   async function boot() {
+    mountFab();
     bind();
     if (!(await CutographyIO.hasServer())) {
       emptyState('The map tool downloads and reads map data through the app. Start Cutography with its launcher (see the README), then open the page it shows.');

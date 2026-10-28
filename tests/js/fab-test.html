@@ -1,0 +1,87 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>fab tests</title>
+<script src="../../web/js/engine.js"></script>
+<script src="../../web/js/export.js"></script>
+<script src="../../web/js/optics.js"></script>
+<script src="../../web/js/fab.js"></script>
+<script src="../../web/js/fab-export.js"></script>
+<pre id="out">running</pre>
+<script>
+/* Process logic (web/js/fab.js) and the lithography exports (web/js/fab-export.js).
+   tests/py/test_fab.py reads the JSON this page reports and checks it, including the GDS in KLayout. */
+const F = CutFab, R = {}, files = {};
+const b64 = async blob => { const b = new Uint8Array(await new Blob([blob]).arrayBuffer()); let s = ''; for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000)); return btoa(s); };
+const sq = (x, y, w, h) => [x, y, x + w, y, x + w, y + h, x, y + h];
+(async () => {
+  try {
+    // --- recipe checks
+    const g = F.defaultRecipe('grayscale');
+    R.default = F.check(g);
+    R.tooFine = F.check(Object.assign({}, g, { levels: 16, depthMinNm: 10, depthMaxNm: 100 }));
+    R.fineOk = F.check(Object.assign({}, g, { levels: 8, depthMinNm: 10, depthMaxNm: 80 }));
+    R.liftoffGray = F.check(Object.assign({}, g, { process: 'liftoff' }));
+    R.thickResist = F.check(Object.assign({}, g, { resistThicknessNm: 300 }));
+    R.etchSel = F.check(Object.assign({}, g, { process: 'etch', selectivity: 0.5, resistThicknessNm: 500 }));
+    const c = F.defaultRecipe('color');
+    R.wrongFamily = F.check(Object.assign({}, c, { process: 'liftoff', family: 'tio2-pillar' }));
+    R.aspect = F.check(Object.assign({}, c, { structureHeightNm: 500, maxAspect: 3 }));
+    R.meaningPos = F.writtenMeaning(g);
+    R.meaningNeg = F.writtenMeaning(Object.assign({}, g, { resist: 'HSQ' }));
+    R.meaningTiO2 = F.writtenMeaning(c);
+    // --- levels and doses
+    const L = F.levels(g);
+    R.levels = L.map(l => ({ h: +l.heightNm.toFixed(2), dc: l.doseClass, dose: +l.relDose.toFixed(4) }));
+    R.levelsNeg = F.levels(Object.assign({}, g, { resist: 'HSQ' })).map(l => ({ h: +l.heightNm.toFixed(2), dc: l.doseClass, dose: +l.relDose.toFixed(4) }));
+    const gc = Object.assign({}, g, { contrast: F.parseContrast('0.2, 1.0\n0.6, 0.6\n1.0, 0.0') });
+    R.contrast = F.levels(gc).map(l => +l.relDose.toFixed(4));
+    try { F.parseContrast('nonsense'); R.badContrast = 'accepted'; } catch (e) { R.badContrast = e.message; }
+    R.doseCsv = F.doseTableCsv(g, L);
+    // --- palettes
+    R.paletteGray = F.palette(g)[0].colors.map(x => [x.name, x.hex, x.structure.level]);
+    const pg = F.palette(Object.assign({}, c, { process: 'resist', family: 'grating' }));
+    R.paletteGrating = pg[0].colors.map(x => [x.structure.periodNm, x.structure.lineWidthNm, x.hex]);
+    const pt = F.palette(Object.assign({}, c, { process: 'resist', family: 'thinfilm' }));
+    R.paletteThin = pt[0].colors.length;
+    const pp = F.palette(c);
+    R.palettePillar = pp[0].colors.map(x => [x.structure.diameterNm, x.structure.pitchNm]);
+    R.recipeJson = JSON.parse(F.recipeJson(g, { file: 'x' }));
+    // --- rule check on a synthetic layout (µm): a 50 nm strip, a 300 nm square, two squares touching at a corner
+    const set = { name: 'rules', unitNm: 1000, bounds: [0, 0, 4, 4], origin: 'lowerLeft', layers: [
+      { name: 'thin', hex: '#000', loops: [sq(0.5, 0.5, 2, 0.05)] },
+      { name: 'ok', hex: '#000', loops: [sq(0.5, 1.5, 0.3, 0.3)] },
+      { name: 'corner', hex: '#000', loops: [sq(2, 2, 0.5, 0.5), sq(2.5, 2.5, 0.5, 0.5)] }
+    ] };
+    const ck = F.checkLayout(set, g);
+    R.rules = { kinds: ck.findings.map(f => f.layer + ':' + f.kind), at: ck.checkedAtNm, coarse: ck.coarse };
+
+    // --- grayscale GDS + BMP from a region set of three levels (µm)
+    const gr = Object.assign({}, g, { levels: 8, gridNm: 5 });
+    const rs = { name: 'gray test', unitNm: 1000, bounds: [0, 0, 30, 10], origin: 'lowerLeft', layers: [
+      { name: 'low', hex: '#333', loops: [sq(0, 0, 10, 10)], structure: { kind: 'level', level: 0 } },
+      { name: 'mid', hex: '#777', loops: [sq(10, 0, 10, 10), sq(13, 3, 4, 4)], structure: { kind: 'level', level: 3 } },
+      { name: 'high', hex: '#bbb', loops: [sq(20, 0, 10, 10), sq(13, 3, 4, 4)], structure: { kind: 'level', level: 7 } }
+    ] };
+    for (const f of FabExport.grayscaleGds(rs, gr, { encoding: 'datatype', holes: 'both' })) files[f.path] = await b64(f.data);
+    for (const f of FabExport.grayscaleGds(rs, gr, { encoding: 'layer', holes: 'keyhole' })) files['layer-' + f.path] = await b64(f.data);
+    for (const f of await FabExport.grayscaleBmp(rs, gr, { pixelNm: 100, values: 'raw' })) files[f.path] = await b64(f.data);
+
+    // --- structural color: gratings and pillars filled into two regions
+    const cr = Object.assign({}, c, { process: 'tio2', family: 'tio2-pillar', gridNm: 1 });
+    const cs = { name: 'color test', unitNm: 1000, bounds: [0, 0, 20, 10], origin: 'lowerLeft', layers: [
+      { name: 'grating', hex: '#4060ff', loops: [sq(0, 0, 10, 10)], structure: { kind: 'grating', periodNm: 600, lineWidthNm: 300, angleDeg: 0 } },
+      { name: 'pillars', hex: '#40c060', loops: [sq(10, 0, 10, 10)], structure: { kind: 'tio2-pillar', diameterNm: 150, pitchNm: 400, lattice: 'square' } }
+    ] };
+    R.estimate = FabExport.estimateFill(cs, cr);
+    const rep = {};
+    for (const f of FabExport.structureGds(cs, cr, { fill: true }, rep)) files[f.path] = await b64(f.data);
+    R.placed = rep.shapes;
+    R.ok = true;
+  } catch (e) { R.error = String(e) + '\n' + e.stack; }
+  const resultText = JSON.stringify({ R, files });
+  document.getElementById('out').textContent = resultText;
+  // tests/py/jsbrowser.py waits for this POST (the page's ?report= URL)
+  const reportTo = new URLSearchParams(location.search).get('report');
+  if (reportTo) fetch(reportTo, { method: 'POST', mode: 'no-cors', body: resultText });
+})();
+</script>

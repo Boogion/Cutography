@@ -10,6 +10,10 @@
      notes()            [{path, text | data}] cut sheet, assembly notes... (optional; may be async)
      cricutNote         HTML string shown under the Cricut buttons (optional)
      toast(msg, ms)     the page's toast
+     mode               'paper' (default) | 'grayscale' | 'color' | 'layers': which cards are shown
+     recipe()           the CutFab recipe (lithography modes)
+     regionSet()        the design's regions in µm, each with its palette `structure` (lithography modes)
+   In the lithography modes layerSet() is in µm too, and the images card works in pixel size (nm).
    Call panel.refresh() whenever the layers change.
 
    Saving: when the page is served by the local app (python -m cutography), files are written to
@@ -64,9 +68,9 @@
 .xp-card .btn.primary small { color: var(--accent-ink); opacity: .85; }
 .xp-grid { display: grid; gap: 6px; }
 .xp-grid .btn { justify-content: flex-start; text-align: left; }
-.xp-opts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 6px 12px; font-size: 13px; }
-.xp-opts label { display: flex; align-items: center; gap: 6px; }
-.xp-opts select { background: var(--panel-2); border: 1px solid var(--line-strong); border-radius: 4px; padding: 3px 6px; }
+.xp-opts { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 6px 12px; font-size: 13px; }
+.xp-opts label { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; min-width: 0; }
+.xp-opts select { background: var(--panel-2); border: 1px solid var(--line-strong); border-radius: 4px; padding: 3px 6px; min-width: 0; max-width: 100%; }
 .xp-opts input { accent-color: var(--accent); }
 .xp-est { font-family: var(--font-mono); font-size: 12px; }
 .xp-status { display: grid; gap: 6px; font-size: 13px; }
@@ -99,6 +103,37 @@
         </div>
         <div class="note" data-slot="gdsNote">True size, 1 nm grid. Layer 1 is the bottom sheet. In KLayout: <b>File → Open</b> the .gds, then <b>File → Load Layer Properties</b> and pick the .lyp to see paper names and colors.</div>
       </section>
+      <section class="xp-card" data-card="ebl">
+        <h3>Grayscale EBL <span>GDS and BMP for BEAMER</span></h3>
+        <div class="xp-opts">
+          <label>Dose encoding <select data-opt="enc"><option value="datatype">layer 1, datatype = dose class</option><option value="layer">one layer per dose class</option></select></label>
+          <label>Holes <select data-opt="holes"><option value="keyhole">keyhole cuts</option><option value="split">split into hole-free pieces</option><option value="both">both (two files, to compare)</option></select></label>
+          <label>BMP pixel <select data-opt="bmpPx"><option>10</option><option>20</option><option selected>50</option><option>100</option><option>200</option><option>500</option><option>1000</option></select> nm</label>
+          <label>BMP values <select data-opt="bmpVals"><option value="raw">0 outside, 1…n = dose class + 1</option><option value="spread">spread over 0–255</option></select></label>
+        </div>
+        <div class="xp-est" data-slot="eblEst"></div>
+        <div class="note">Every level is its own non-overlapping region, so each spot is written once at its level's dose. Assign doses in BEAMER from the dose table (a straight-line placeholder until you load a contrast curve in the setup). Proximity correction stays in BEAMER.</div>
+        <div class="xp-grid">
+          <button class="btn primary" data-act="eblGds">Layout (.gds + .lyp) + dose table + recipe</button>
+          <button class="btn" data-act="eblBmp">Grayscale dose map (.bmp)</button>
+          <button class="btn" data-act="check">Rule check</button>
+        </div>
+        <div class="note" data-slot="checkOut"></div>
+      </section>
+      <section class="xp-card" data-card="struct">
+        <h3>Structural color <span>regions and nanostructures</span></h3>
+        <div class="xp-opts">
+          <label>Holes <select data-opt="sholes"><option value="keyhole">keyhole cuts</option><option value="split">split into hole-free pieces</option></select></label>
+        </div>
+        <div class="xp-est" data-slot="structEst"></div>
+        <div class="note">Region masks sit on layers 100, 101, … (one per palette entry). The filled layout adds the structures on layer 1, datatype = palette entry, as gratings or as arrays of one pillar cell. Neighbouring regions keep your minimum gap. The structures table lists every entry's parameters and area.</div>
+        <div class="xp-grid">
+          <button class="btn primary" data-act="structFill">Filled layout (.gds) + structures table + recipe</button>
+          <button class="btn" data-act="structRegions">Region masks only (.gds), to fill in BEAMER</button>
+          <button class="btn" data-act="check">Rule check</button>
+        </div>
+        <div class="note" data-slot="checkOut2"></div>
+      </section>
       <section class="xp-card" data-card="images">
         <h3>High-res images <span>for print, film or analysis</span></h3>
         <div class="xp-opts">
@@ -121,6 +156,26 @@
     container.appendChild(wrap);
     const $ = sel => wrap.querySelector(sel);
     const opt = name => { const e = $(`[data-opt="${name}"]`); return e.type === 'checkbox' ? e.checked : e.value; };
+    // which cards this mode shows
+    const mode = P.mode || 'paper', litho = mode !== 'paper', R = () => P.recipe && P.recipe();
+    const FAB = root.CutFab, FX = root.FabExport;
+    const grayDesign = () => litho && mode !== 'layers' && FAB && FX && FAB.isGrayDesign(R());
+    function showCards() {
+      const want = mode === 'paper' ? ['cricut', 'gds', 'images'] : mode === 'layers' ? ['gds', 'images'] : grayDesign() ? ['ebl', 'images'] : ['struct', 'images'];
+      wrap.querySelectorAll('[data-card]').forEach(c => { c.hidden = want.indexOf(c.dataset.card) < 0; });
+    }
+    showCards();
+    if (litho) {
+      // images in the lithography modes are set by pixel size, not dpi
+      const d = $('[data-opt="dpi"]');
+      d.parentNode.firstChild.textContent = 'Pixel ';
+      d.innerHTML = [1000, 500, 250, 100, 50, 20].map(v => `<option value="${v}"${v === 250 ? ' selected' : ''}>${v}</option>`).join('');
+      d.parentNode.lastChild.textContent = ' nm';
+      $('[data-slot="gdsNote"]').textContent = 'True size in µm, 1 nm database unit. Layer 1 is the first layer.';
+    }
+    const imgFrame = (set, mirror) => litho ? X.frameForPixel(set, Number(opt('dpi')), mirror) : X.frame(set, Number(opt('dpi')), mirror);
+    const imgDpi = (set, f) => litho ? X.physDpi(set, f.dpi) : Number(opt('dpi'));
+    const imgTag = () => litho ? `${opt('dpi')}nm` : `${opt('dpi')}dpi`;
     if (P.cricutNote) $('[data-slot="cricutNote"]').innerHTML = P.cricutNote;
     if (!P.cricutSvgLayers) $('[data-act="svgLayers"]').hidden = true;
 
@@ -140,14 +195,30 @@
     function estimate() {
       const s = P.size && P.size(), out = $('[data-slot="est"]');
       if (!s) { out.textContent = ''; return; }
-      const dpi = Number(opt('dpi')), w = Math.round(s.wIn * dpi), h = Math.round(s.hIn * dpi), px = w * h;
+      const dpi = litho ? 25.4e6 / Number(opt('dpi')) : Number(opt('dpi')), w = Math.round(s.wIn * dpi), h = Math.round(s.hIn * dpi), px = w * h;
+      if (litho) estimateLitho(s);
       const n = (opt('masks') ? s.layers : 0) + (opt('color') ? 1 : 0) + (opt('label') ? 1 : 0);
       // compressed sizes vary with detail; these are generous guesses for flat cut art
       const bmp = opt('fmt') === 'bmp';   // BMP is uncompressed
       const per = (opt('masks') ? s.layers * px / 8 / (bmp ? 1 : 20) : 0) + (opt('color') ? px * (bmp ? 3 : opt('fmt') === 'png' ? 0.06 : 0.12) : 0) + (opt('label') ? px * (bmp ? 1 : 0.05) : 0);
-      out.textContent = `${n} image${n === 1 ? '' : 's'} · ${w.toLocaleString()} × ${h.toLocaleString()} px (${fmt(s.wIn)} × ${fmt(s.hIn)} in) · about ${mb(per)}`;
+      const sizeTxt = litho && FAB ? `${FAB.fmtUm(s.wIn * 25400)} × ${FAB.fmtUm(s.hIn * 25400)}` : `${fmt(s.wIn)} × ${fmt(s.hIn)} in`;
+      out.textContent = `${n} image${n === 1 ? '' : 's'} · ${w.toLocaleString()} × ${h.toLocaleString()} px (${sizeTxt}) · about ${mb(per)}`;
       out.className = 'xp-est' + (px > 4e8 ? ' note bad' : px > 1.2e8 ? ' note warn' : '');
       if (px > 4e8) out.textContent += ' · very large: expect a long wait and a lot of memory';
+    }
+    function estimateLitho(s) {
+      const px = Number(opt('bmpPx')), w = Math.round(s.wIn * 25.4e6 / px), h = Math.round(s.hIn * 25.4e6 / px), e = $('[data-slot="eblEst"]');
+      e.textContent = `Dose map at ${px} nm: ${w.toLocaleString()} × ${h.toLocaleString()} px, about ${mb(w * h)} uncompressed`;
+      e.className = 'xp-est' + (w * h > 4e9 ? ' note bad' : w * h > 4e8 ? ' note warn' : '');
+      if (w * h > 4e9) e.textContent += ' · too large for a bitmap: use a coarser pixel or the GDS';
+      const se = $('[data-slot="structEst"]');
+      if (!grayDesign() && mode === 'color' && P.regionSet && FX) {
+        try {
+          const n = FX.estimateFill(P.regionSet(), R());
+          se.textContent = `Filling makes about ${n.toLocaleString()} shapes` + (n > 3e7 ? ' · too many to fill here: export region masks and fill in BEAMER' : n > 3e6 ? ' · large: this will take a while' : '');
+          se.className = 'xp-est' + (n > 3e7 ? ' note bad' : n > 3e6 ? ' note warn' : '');
+        } catch (err) { se.textContent = ''; }
+      }
     }
     wrap.querySelectorAll('[data-opt]').forEach(e => e.addEventListener('change', estimate));
 
@@ -219,8 +290,8 @@
       return bytes.stats;
     }
     async function addImages(out, set) {
-      const dpi = Number(opt('dpi')), fmtName = opt('fmt'), mirror = opt('mirror'), invert = opt('invert'), transparent = opt('transparent');
-      const f = X.frame(set, dpi, mirror), ext = { png: 'png', tiff: 'tif', bmp: 'bmp' }[fmtName], dir = `images/${dpi}dpi/`;
+      const fmtName = opt('fmt'), mirror = opt('mirror'), invert = opt('invert'), transparent = opt('transparent');
+      const f = imgFrame(set, mirror), dpi = imgDpi(set, f), ext = { png: 'png', tiff: 'tif', bmp: 'bmp' }[fmtName], dir = `images/${imgTag()}/`;
       const jobs = [];
       if (opt('masks')) set.layers.forEach((L, i) => jobs.push({ name: `${pad2(i)}-${slug(L.name)}-mask`, title: `mask ${i + 1}: ${L.name}`, layer: i, make: () => X.maskRows(L.loops, f, invert), png: { kind: 'gray1' }, tiff: { kind: 'bilevel' }, bmp: { kind: 'gray1' } }));
       if (opt('color')) jobs.push({ name: `${base()}-color`, title: 'color composite', make: () => transparent && fmtName === 'png' ? X.labelRows(set, f) : X.rgbRows(set, f, '#ffffff'),
@@ -229,9 +300,9 @@
       if (!jobs.length) throw new Error('Pick at least one kind of image');
       const files = set.layers.map(() => []);
       for (let k = 0; k < jobs.length; k++) {
-        const J = jobs[k], label = `${dpi} dpi ${J.title} (${k + 1} of ${jobs.length})`;
+        const J = jobs[k], label = `${imgTag()} ${J.title} (${k + 1} of ${jobs.length})`;
         const onProgress = p => status(label, (k + p) / jobs.length);
-        const rows = J.make(), desc = `${set.name}: ${J.title}, ${dpi} dpi`;
+        const rows = J.make(), desc = `${set.name}: ${J.title}, ${litho ? opt('dpi') + ' nm pixels' : dpi + ' dpi'}`;
         const blob = fmtName === 'png' ? await X.png(rows, Object.assign({ dpi, onProgress, text: { Title: desc } }, J.png))
           : fmtName === 'bmp' ? await X.bmp(rows, Object.assign({ dpi, onProgress }, J.bmp))
           : await X.tiff(rows, Object.assign({ dpi, onProgress, description: desc }, J.tiff));
@@ -239,12 +310,49 @@
         out.add(path, blob);
         if (J.layer != null) files[J.layer].push(path.slice(dir.length));
       }
-      out.add(dir + 'scale.json', X.manifest(set, { frame: f, invert, files }));
+      out.add(dir + 'scale.json', X.manifest(set, { frame: f, invert, files, pixelNm: litho ? Number(opt('dpi')) : undefined }));
     }
     const grayPalette = () => Array.from({ length: 256 }, (_, i) => [i, i, i]);
     const getSet = () => { status('Preparing outlines…', 0.02); return P.layerSet(); };
 
+    function checkInto(slot) {
+      const rep2 = FX.checkReport(P.regionSet(), R());
+      const box = $(`[data-slot="${slot}"]`);
+      box.textContent = rep2.text.trim().split('\n').slice(1).filter(Boolean).join(' · ');
+      box.className = 'note' + (rep2.result.findings.length ? ' warn' : '');
+      return rep2;
+    }
+    const checkSlot = () => grayDesign() ? 'checkOut' : 'checkOut2';
+    function recipeOk() { const chk = FAB.check(R()); if (!chk.ok) throw new Error(chk.errors[0]); }
+    async function addEbl(out) {
+      recipeOk();
+      status('Grayscale layout', 0.3);
+      await new Promise(res => setTimeout(res, 30));
+      for (const f of FX.grayscaleGds(P.regionSet(), R(), { encoding: opt('enc'), holes: opt('holes') })) out.add(f.path, f.data);
+    }
+    async function addEblBmp(out) {
+      recipeOk();
+      const files = await FX.grayscaleBmp(P.regionSet(), R(), { pixelNm: Number(opt('bmpPx')), values: opt('bmpVals'), mirror: opt('mirror') }, p => status('Grayscale dose map', p));
+      for (const f of files) out.add(f.path, f.data);
+    }
+    async function addStruct(out, fill) {
+      recipeOk();
+      const set = P.regionSet();
+      if (fill && FX.estimateFill(set, R()) > 3e7) throw new Error('Too many structures to fill here. Export the region masks and fill them in BEAMER.');
+      status(fill ? 'Filling regions with structures…' : 'Region masks', 0.3);
+      await new Promise(res => setTimeout(res, 30));
+      const report = {};
+      for (const f of FX.structureGds(set, R(), { fill, holes: opt('sholes') }, report)) out.add(f.path, f.data);
+      if (fill) toast(`${report.shapes.toLocaleString()} structures placed`);
+    }
+    async function addRuleCheck(out) { status('Rule check', 0.8); await new Promise(res => setTimeout(res, 30)); out.add('rule-check.txt', checkInto(checkSlot()).text); }
+
     const actions = {
+      eblGds: () => run('eblGds', async () => { const o = collector('ebl'); await addEbl(o); await o.finish(); }),
+      eblBmp: () => run('eblBmp', async () => { const o = collector('ebl-bmp'); await addEblBmp(o); await o.finish(); }),
+      structFill: () => run('structFill', async () => { const o = collector('structures'); await addStruct(o, true); await o.finish(); }),
+      structRegions: () => run('structRegions', async () => { const o = collector('regions'); await addStruct(o, false); await o.finish(); }),
+      check: () => run('check', async () => { status('Rule check', 0.5); await new Promise(res => setTimeout(res, 30)); checkInto(checkSlot()); }),
       svg: () => run('svg', async () => { const o = collector('cricut'); addSvg(o); await o.finish(); }),
       svgLayers: () => run('svgLayers', async () => { const o = collector('cricut-layers'); addSvgLayers(o); await o.finish(); }),
       pngLayers: () => run('pngLayers', async () => { const o = collector('cricut-png'); await addPngLayers(o, getSet()); await o.finish(); }),
@@ -253,8 +361,11 @@
       images: () => run('images', async () => { const o = collector('images'); await addImages(o, getSet()); await o.finish(); }),
       all: () => run('all', async () => {
         const o = collector('all'), set = getSet();
-        addSvg(o); if (P.cricutSvgLayers) addSvgLayers(o);
-        await addPngLayers(o, set); await addPtc(o, set); addGds(o, set); await addImages(o, set);
+        if (mode === 'paper') { addSvg(o); if (P.cricutSvgLayers) addSvgLayers(o); await addPngLayers(o, set); await addPtc(o, set); addGds(o, set); }
+        else if (mode === 'layers') addGds(o, set);
+        else if (grayDesign()) { await addEbl(o); await addEblBmp(o); await addRuleCheck(o); }
+        else { await addStruct(o, FX.estimateFill(P.regionSet(), R()) <= 3e7); await addRuleCheck(o); }
+        await addImages(o, set);
         for (const n of (P.notes ? await P.notes() : [])) o.add(n.path, n.text != null ? n.text : n.data);
         await o.finish();
         if (server) IO.openFolder(slug(P.project())).catch(() => {});
@@ -264,9 +375,10 @@
 
     const panel = {
       refresh() {
+        showCards();
         estimate();
         const s = P.size && P.size();
-        $('[data-act="pngLayers"] small').textContent = s ? `${s.layers} file${s.layers === 1 ? '' : 's'}, 300 dpi, transparent` : '300 dpi, transparent';
+        if (!litho) $('[data-act="pngLayers"] small').textContent = s ? `${s.layers} file${s.layers === 1 ? '' : 's'}, 300 dpi, transparent` : '300 dpi, transparent';
       }
     };
     panel.refresh();
