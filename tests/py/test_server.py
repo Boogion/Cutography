@@ -11,6 +11,7 @@ import unittest
 from urllib.parse import quote
 
 import support  # noqa: F401
+import cutography
 from cutography import paths, server
 
 
@@ -86,7 +87,7 @@ class ServerTest(unittest.TestCase):
     def test_health(self):
         status, d = self.jreq("GET", "/api/health")
         self.assertEqual(status, 200)
-        self.assertEqual(d, {"ok": True, "version": "0.1.0"})
+        self.assertEqual(d, {"ok": True, "version": cutography.__version__})
 
     def test_localhost_host_allowed(self):
         status, _, _ = self.req("GET", "/api/health", host="localhost:%d" % self.port)
