@@ -8,7 +8,7 @@ from . import net
 
 # Tried in order; the last mirror that answered is tried first next time.
 # overpass-api.de is the main instance but can be slow from some networks; maps.mail.ru is a
-# full mirror. Override with PAPERSTRATA_OVERPASS="url1,url2".
+# full mirror. Override with CUTOGRAPHY_OVERPASS="url1,url2".
 MIRRORS = [
     "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
     "https://overpass-api.de/api/interpreter",
@@ -71,7 +71,7 @@ def build_query(south, west, north, east, diameter_m, timeout=180):
 
 
 def mirrors():
-    env = os.environ.get("PAPERSTRATA_OVERPASS")
+    env = os.environ.get("CUTOGRAPHY_OVERPASS")
     ms = [m.strip() for m in env.split(",") if m.strip()] if env else list(MIRRORS)
     if _last_good[0] in ms:
         ms.remove(_last_good[0])

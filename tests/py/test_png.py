@@ -2,7 +2,7 @@ import random
 import unittest
 
 import support
-from paperstrata import terrain
+from cutography import terrain
 
 
 def random_pixels(w, h, ch, seed):

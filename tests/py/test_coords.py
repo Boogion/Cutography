@@ -2,7 +2,7 @@
 import unittest
 
 import support  # noqa: F401  (sets sys.path)
-from paperstrata import coords
+from cutography import coords
 
 LAT, LON = 35.93201, -84.30970
 DMS_LAT, DMS_LON = 35 + 55 / 60 + 55.2 / 3600, -(84 + 18 / 60 + 34.9 / 3600)

@@ -1,4 +1,4 @@
-/* app.js — UI for PaperStrata. Depends on engine.js, palettes.js, JSZip (optional). */
+/* app.js — UI for Cutography. Depends on engine.js, palettes.js, JSZip (optional). */
 (function () {
   'use strict';
   const E = CutEngine, P = CutPalettes;
@@ -47,7 +47,7 @@
   function textContrast(hex) { const [r, g, b] = E.hexToRgb(hex); return E.luma(r, g, b) > 150 ? '#1a1a1a' : '#f6f6f6'; }
 
   // Single downloads (palette, project). Exports go through the shared panel in export-ui.js.
-  function saveFile(filename, data) { PaperStrataIO.download(filename, data); }
+  function saveFile(filename, data) { CutographyIO.download(filename, data); }
 
   function readFileAsDataURL(file) {
     return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); });
@@ -785,7 +785,7 @@
   function projectJson() {
     const S = state.settings;
     return JSON.stringify({
-      app: 'paperstrata', version: 1, savedAt: new Date().toISOString(),
+      app: 'cutography', version: 1, savedAt: new Date().toISOString(),
       settings: S, packs: state.packs.map(p => ({ ...p, colors: p.colors.map(c => ({ id: c.id, name: c.name, hex: c.hex, on: c.on, uid: c.uid })) })),
       order: state.order, excluded: Array.from(state.excluded), clusterMap: state.clusterMap, toneUse: state.toneUse ? Array.from(state.toneUse) : null,
       overrides: state.overrides ? rleEncode(state.overrides) : null, workSize: state.work ? [state.work.w, state.work.h] : null,
@@ -797,7 +797,7 @@
 
   async function loadProject(text) {
     const j = JSON.parse(text);
-    if (j.app !== 'paperstrata' && j.app !== 'cardstock-layer-studio') throw new Error('Not a PaperStrata project');   // older saves used the original name
+    if (j.app !== 'cutography' && j.app !== 'cardstock-layer-studio') throw new Error('Not a Cutography project');   // older saves used the original name
     // packs keep their uids so order / overrides stay meaningful
     state.packs = j.packs.map(p => ({ ...p, colors: p.colors.map(c => ({ ...c })) }));
     uidCounter = Math.max(uidCounter, ...state.packs.flatMap(p => p.colors.map(c => c.uid || 0))) + 1;

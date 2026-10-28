@@ -10,7 +10,7 @@ import unittest
 
 import support  # noqa: F401
 from jsbrowser import find_browser, run_page
-from paperstrata import server
+from cutography import server
 
 EXAMPLES = {'san-francisco', 'rome', 'sydney'}
 
@@ -19,10 +19,10 @@ EXAMPLES = {'san-francisco', 'rome', 'sydney'}
 class Smoke(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.tmp = tempfile.TemporaryDirectory(prefix='paperstrata-smoke-')
-        cls.env = {k: os.environ.get(k) for k in ('PAPERSTRATA_HOME', 'PAPERSTRATA_NO_OPEN')}
-        os.environ['PAPERSTRATA_HOME'] = cls.tmp.name
-        os.environ['PAPERSTRATA_NO_OPEN'] = '1'
+        cls.tmp = tempfile.TemporaryDirectory(prefix='cutography-smoke-')
+        cls.env = {k: os.environ.get(k) for k in ('CUTOGRAPHY_HOME', 'CUTOGRAPHY_NO_OPEN')}
+        os.environ['CUTOGRAPHY_HOME'] = cls.tmp.name
+        os.environ['CUTOGRAPHY_NO_OPEN'] = '1'
         cls.httpd = server.make_server(0, fallback=False)
         threading.Thread(target=cls.httpd.serve_forever, kwargs={'poll_interval': 0.05}, daemon=True).start()
         url = 'http://127.0.0.1:%d/tests/js/smoke.html' % cls.httpd.server_address[1]

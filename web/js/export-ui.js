@@ -12,8 +12,8 @@
      toast(msg, ms)     the page's toast
    Call panel.refresh() whenever the layers change.
 
-   Saving: when the page is served by the local app (python -m paperstrata), files are written to
-   Documents/PaperStrata/output/<project>/ and the folder can be opened from the page.
+   Saving: when the page is served by the local app (python -m cutography), files are written to
+   Documents/Cutography/output/<project>/ and the folder can be opened from the page.
    Opened straight from disk, single files download and sets of files download as a ZIP. */
 (function (root) {
   'use strict';
@@ -47,7 +47,7 @@
       if (!r.ok) throw new Error('Could not open the folder');
     }
   };
-  root.PaperStrataIO = IO;
+  root.CutographyIO = IO;
 
   const slug = s => String(s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'layers';
   const pad2 = i => String(i + 1).padStart(2, '0');
@@ -103,13 +103,13 @@
         <h3>High-res images <span>for print, film or analysis</span></h3>
         <div class="xp-opts">
           <label>Resolution <select data-opt="dpi"><option>300</option><option selected>600</option><option>1200</option><option>2400</option><option>4800</option></select> dpi</label>
-          <label>Format <select data-opt="fmt"><option value="png">PNG</option><option value="tiff">TIFF</option></select></label>
+          <label>Format <select data-opt="fmt"><option value="png">PNG</option><option value="tiff">TIFF</option><option value="bmp">BMP</option></select></label>
           <label><input type="checkbox" data-opt="masks" checked> Layer masks (1-bit)</label>
           <label><input type="checkbox" data-opt="color" checked> Color composite</label>
           <label><input type="checkbox" data-opt="label"> Label map (8-bit)</label>
           <label><input type="checkbox" data-opt="mirror"> Mirror</label>
           <label><input type="checkbox" data-opt="invert"> Invert masks</label>
-          <label><input type="checkbox" data-opt="transparent"> Transparent background</label>
+          <label><input type="checkbox" data-opt="transparent"> Transparent background (PNG)</label>
         </div>
         <div class="xp-est" data-slot="est"></div>
         <div class="note">Masks are white where the layer has paper (black with <i>Invert</i>). In the label map each pixel holds the number of the top-most layer, 0 for none. A <code>scale.json</code> file records the pixel size and layer order. Mirror flips left-right, for printing film emulsion side down.</div>
@@ -143,7 +143,8 @@
       const dpi = Number(opt('dpi')), w = Math.round(s.wIn * dpi), h = Math.round(s.hIn * dpi), px = w * h;
       const n = (opt('masks') ? s.layers : 0) + (opt('color') ? 1 : 0) + (opt('label') ? 1 : 0);
       // compressed sizes vary with detail; these are generous guesses for flat cut art
-      const per = (opt('masks') ? s.layers * px / 8 / 20 : 0) + (opt('color') ? px * (opt('fmt') === 'png' ? 0.06 : 0.12) : 0) + (opt('label') ? px * 0.05 : 0);
+      const bmp = opt('fmt') === 'bmp';   // BMP is uncompressed
+      const per = (opt('masks') ? s.layers * px / 8 / (bmp ? 1 : 20) : 0) + (opt('color') ? px * (bmp ? 3 : opt('fmt') === 'png' ? 0.06 : 0.12) : 0) + (opt('label') ? px * (bmp ? 1 : 0.05) : 0);
       out.textContent = `${n} image${n === 1 ? '' : 's'} · ${w.toLocaleString()} × ${h.toLocaleString()} px (${fmt(s.wIn)} × ${fmt(s.hIn)} in) · about ${mb(per)}`;
       out.className = 'xp-est' + (px > 4e8 ? ' note bad' : px > 1.2e8 ? ' note warn' : '');
       if (px > 4e8) out.textContent += ' · very large: expect a long wait and a lot of memory';
@@ -219,19 +220,21 @@
     }
     async function addImages(out, set) {
       const dpi = Number(opt('dpi')), fmtName = opt('fmt'), mirror = opt('mirror'), invert = opt('invert'), transparent = opt('transparent');
-      const f = X.frame(set, dpi, mirror), ext = fmtName === 'png' ? 'png' : 'tif', dir = `images/${dpi}dpi/`;
+      const f = X.frame(set, dpi, mirror), ext = { png: 'png', tiff: 'tif', bmp: 'bmp' }[fmtName], dir = `images/${dpi}dpi/`;
       const jobs = [];
-      if (opt('masks')) set.layers.forEach((L, i) => jobs.push({ name: `${pad2(i)}-${slug(L.name)}-mask`, title: `mask ${i + 1}: ${L.name}`, layer: i, make: () => X.maskRows(L.loops, f, invert), png: { kind: 'gray1' }, tiff: { kind: 'bilevel' } }));
+      if (opt('masks')) set.layers.forEach((L, i) => jobs.push({ name: `${pad2(i)}-${slug(L.name)}-mask`, title: `mask ${i + 1}: ${L.name}`, layer: i, make: () => X.maskRows(L.loops, f, invert), png: { kind: 'gray1' }, tiff: { kind: 'bilevel' }, bmp: { kind: 'gray1' } }));
       if (opt('color')) jobs.push({ name: `${base()}-color`, title: 'color composite', make: () => transparent && fmtName === 'png' ? X.labelRows(set, f) : X.rgbRows(set, f, '#ffffff'),
-        png: transparent ? { kind: 'index8', palette: [[255, 255, 255]].concat(set.layers.map(L => X.hexRgb(L.hex))), transparent: [0] } : { kind: 'rgb' }, tiff: { kind: 'rgb' } });
-      if (opt('label')) jobs.push({ name: `${base()}-labels`, title: 'label map', make: () => X.labelRows(set, f), png: { kind: 'index8', palette: grayPalette() }, tiff: { kind: 'gray8' } });
+        png: transparent ? { kind: 'index8', palette: [[255, 255, 255]].concat(set.layers.map(L => X.hexRgb(L.hex))), transparent: [0] } : { kind: 'rgb' }, tiff: { kind: 'rgb' }, bmp: { kind: 'rgb' } });
+      if (opt('label')) jobs.push({ name: `${base()}-labels`, title: 'label map', make: () => X.labelRows(set, f), png: { kind: 'index8', palette: grayPalette() }, tiff: { kind: 'gray8' }, bmp: { kind: 'index8', palette: grayPalette() } });
       if (!jobs.length) throw new Error('Pick at least one kind of image');
       const files = set.layers.map(() => []);
       for (let k = 0; k < jobs.length; k++) {
         const J = jobs[k], label = `${dpi} dpi ${J.title} (${k + 1} of ${jobs.length})`;
         const onProgress = p => status(label, (k + p) / jobs.length);
         const rows = J.make(), desc = `${set.name}: ${J.title}, ${dpi} dpi`;
-        const blob = fmtName === 'png' ? await X.png(rows, Object.assign({ dpi, onProgress, text: { Title: desc } }, J.png)) : await X.tiff(rows, Object.assign({ dpi, onProgress, description: desc }, J.tiff));
+        const blob = fmtName === 'png' ? await X.png(rows, Object.assign({ dpi, onProgress, text: { Title: desc } }, J.png))
+          : fmtName === 'bmp' ? await X.bmp(rows, Object.assign({ dpi, onProgress }, J.bmp))
+          : await X.tiff(rows, Object.assign({ dpi, onProgress, description: desc }, J.tiff));
         const path = dir + J.name + '.' + ext;
         out.add(path, blob);
         if (J.layer != null) files[J.layer].push(path.slice(dir.length));

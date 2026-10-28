@@ -3,13 +3,13 @@
 Resources resolve from the source tree, or from sys._MEIPASS when the app is frozen by
 PyInstaller (add the folders with --add-data "web:web" --add-data "sites:sites").
 
-The user data folder is ~/Documents/PaperStrata/ (created on demand). Set the
-environment variable PAPERSTRATA_HOME to use a different folder (the tests do).
+The user data folder is ~/Documents/Cutography/ (created on demand). Set the
+environment variable CUTOGRAPHY_HOME to use a different folder (the tests do).
 """
 import os
 import sys
 
-APP_NAME = "PaperStrata"
+APP_NAME = "Cutography"
 
 
 def is_frozen():
@@ -24,7 +24,7 @@ def resource_root():
 
 
 def web_dir():
-    return os.environ.get("PAPERSTRATA_WEB") or os.path.join(resource_root(), "web")
+    return os.environ.get("CUTOGRAPHY_WEB") or os.path.join(resource_root(), "web")
 
 
 def bundled_sites_dir():
@@ -107,7 +107,7 @@ def documents_dir():
 
 
 def user_home(create=True):
-    home = os.environ.get("PAPERSTRATA_HOME") or os.path.join(documents_dir(), APP_NAME)
+    home = os.environ.get("CUTOGRAPHY_HOME") or os.path.join(documents_dir(), APP_NAME)
     home = os.path.abspath(home)
     if create:
         os.makedirs(home, exist_ok=True)

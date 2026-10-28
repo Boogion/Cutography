@@ -208,7 +208,7 @@ class Jobs(object):
 
 # ------------------------------------------------------------------ HTTP
 def open_folder(path):
-    if os.environ.get("PAPERSTRATA_NO_OPEN"):
+    if os.environ.get("CUTOGRAPHY_NO_OPEN"):
         return
     if sys.platform == "win32":
         os.startfile(path)  # type: ignore[attr-defined]
@@ -221,13 +221,13 @@ def open_folder(path):
 def _fallback_index(web):
     pages = sorted(f for f in os.listdir(web) if f.endswith(".html")) if os.path.isdir(web) else []
     links = "".join('<li><a href="/%s">%s</a></li>' % (p, p) for p in pages)
-    return ("<!doctype html><meta charset=utf-8><title>PaperStrata</title>"
-            "<body style='font-family:system-ui;margin:2em'><h1>PaperStrata</h1>"
+    return ("<!doctype html><meta charset=utf-8><title>Cutography</title>"
+            "<body style='font-family:system-ui;margin:2em'><h1>Cutography</h1>"
             "<ul>%s</ul></body>" % links).encode("utf-8")
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "PaperStrata/" + __version__
+    server_version = "Cutography/" + __version__
     sys_version = ""
 
     # --- plumbing

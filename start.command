@@ -1,10 +1,10 @@
 #!/bin/bash
-# PaperStrata: starts the app from source and opens it in your browser.
+# Cutography: starts the app from source and opens it in your browser.
 # Double-click this file in Finder. Needs Python 3.9 or newer. Close the Terminal window to quit.
 cd "$(dirname "$0")" || exit 1
 for py in python3 python; do
   if command -v "$py" >/dev/null 2>&1 && "$py" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' 2>/dev/null; then
-    exec "$py" -m paperstrata "$@"
+    exec "$py" -m cutography "$@"
   fi
 done
 echo

@@ -152,6 +152,23 @@ def read_tiff(data):
     return {'w': w, 'h': h, 'tags': tags, 'rows': rows}
 
 
+def read_bmp(data):
+    """Uncompressed BMP -> rows top-down, unpadded."""
+    assert data[:2] == b'BM'
+    off, = struct.unpack('<I', data[10:14])
+    hsize, w, h, planes, bpp, comp = struct.unpack('<IiiHHI', data[14:34])
+    ppm, = struct.unpack('<i', data[38:42])
+    assert comp == 0 and h > 0
+    ncol = (off - 54) // 4
+    palette = [tuple(data[54 + i * 4:57 + i * 4][::-1]) for i in range(ncol)]
+    stride = (w * bpp + 31) // 32 * 4
+    used = (w * bpp + 7) // 8
+    rows = [data[off + (h - 1 - j) * stride:off + (h - 1 - j) * stride + used] for j in range(h)]
+    if bpp == 24:
+        rows = [bytes(b for i in range(w) for b in (r[i * 3 + 2], r[i * 3 + 1], r[i * 3])) for r in rows]
+    return {'w': w, 'h': h, 'bpp': bpp, 'ppm': ppm, 'palette': palette, 'rows': rows}
+
+
 def bit(row, i):
     return (row[i >> 3] >> (7 - (i & 7))) & 1
 
@@ -265,6 +282,20 @@ class ExportWriters(unittest.TestCase):
         rgb = read_tiff(self.files['rgb.tif'])
         self.assertEqual(rgb['tags'][262][0], 2)
         self.assertEqual(rgb['rows'][100][300:303], bytes([0x1f, 0x4f, 0xa3]))
+
+    def test_bmps(self):
+        png = read_png(self.files['mask-L01.png'])
+        m = read_bmp(self.files['mask-L01.bmp'])
+        self.assertEqual((m['w'], m['h'], m['bpp']), (350, 200, 1))
+        self.assertEqual(m['ppm'], round(100 / 0.0254))
+        self.assertEqual(m['palette'], [(0, 0, 0), (255, 255, 255)])
+        self.assertEqual(m['rows'], [bytes(r) for r in png['rows']])
+        lab = read_bmp(self.files['label.bmp'])
+        self.assertEqual(lab['bpp'], 8)
+        self.assertEqual(lab['rows'], [bytes(r) for r in read_png(self.files['label.png'])['rows']])
+        rgb = read_bmp(self.files['rgb.bmp'])
+        self.assertEqual(rgb['bpp'], 24)
+        self.assertEqual(rgb['rows'], [bytes(r) for r in read_png(self.files['rgb.png'])['rows']])
 
     def test_manifest(self):
         m = json.loads(self.files['manifest.json'])

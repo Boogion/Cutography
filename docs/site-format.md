@@ -2,14 +2,14 @@
 
 A *site* is one JSON file describing a circular patch of the world: an elevation grid plus
 buildings, roads and water from OpenStreetMap, all in metres around the site's centre. The
-map generator in `web/` reads it; `paperstrata/sitefetch.py` writes it.
+map generator in `web/` reads it; `cutography/sitefetch.py` writes it.
 
 Where sites live:
 
 | Source     | Folder                                              | Listed as `source` |
 |------------|-----------------------------------------------------|--------------------|
 | Examples   | `sites/` in the repo (bundled, read-only when frozen) | `example`          |
-| Fetched    | `~/Documents/PaperStrata/sites/`         | `user`             |
+| Fetched    | `~/Documents/Cutography/sites/`         | `user`             |
 | Internal   | `internal/<name>/site.json` (source checkout only, never shipped) | `internal` |
 
 Files are written with compact separators (`(",", ":")`), UTF-8, no BOM.

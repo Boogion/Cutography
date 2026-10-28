@@ -8,7 +8,7 @@
    a loop inside another loop is a hole, a loop inside a hole is an island, and so on.
 
    Writers:  GDSII (+ KLayout .lyp), PNG (1-bit, indexed, with DPI), TIFF (bilevel, 8-bit, RGB;
-   PackBits), and a scale.json manifest. Rasters are drawn row by row with a scanline fill, so
+   PackBits), BMP (1-bit, 8-bit, 24-bit), and a scale.json manifest. Rasters are drawn row by row with a scanline fill, so
    size is limited only by memory for the compressed output, not by the browser's canvas cap. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
@@ -411,7 +411,7 @@
       if ((j & 255) === 255) { if (opts.onProgress) opts.onProgress((j + 1) / rows.height); await tick(); }
     }
     const enc = s => Uint8Array.from(String(s).replace(/[^\x20-\x7e\n]/g, '?') + '\0', c => c.charCodeAt(0));
-    const desc = enc(opts.description || ''), soft = enc('PaperStrata');
+    const desc = enc(opts.description || ''), soft = enc('Cutography');
     const tags = [];   // [tag, type, count, value(s) | {bytes}]
     tags.push([254, 4, 1, 0]);
     tags.push([256, 4, 1, rows.width]);
@@ -454,11 +454,39 @@
     return new Blob(parts, { type: 'image/tiff' });
   };
 
+  /* ------------------------------------------------------------ BMP */
+  /* Uncompressed Windows bitmap. kind: 'gray1' (1-bit, 1 = white) | 'index8' (palette) | 'rgb' (24-bit).
+     Rows are stored bottom-up and padded to 4 bytes, so the whole image is held until the end. */
+  X.bmp = async function (rows, opts) {
+    const kind = opts.kind, bpp = kind === 'gray1' ? 1 : kind === 'index8' ? 8 : 24;
+    const palette = kind === 'gray1' ? [[0, 0, 0], [255, 255, 255]] : kind === 'index8' ? opts.palette : [];
+    const stride = Math.ceil(rows.width * bpp / 32) * 4, dataSize = stride * rows.height;
+    const offset = 14 + 40 + palette.length * 4, fileSize = offset + dataSize;
+    if (fileSize > 0xffffffff) throw new Error('This image would be larger than 4 GB, the BMP limit. Use PNG or TIFF, or a lower resolution.');
+    const head = new Uint8Array(offset), dv = new DataView(head.buffer);
+    head[0] = 0x42; head[1] = 0x4d; dv.setUint32(2, fileSize, true); dv.setUint32(10, offset, true);
+    dv.setUint32(14, 40, true); dv.setInt32(18, rows.width, true); dv.setInt32(22, rows.height, true);
+    dv.setUint16(26, 1, true); dv.setUint16(28, bpp, true); dv.setUint32(30, 0, true); dv.setUint32(34, dataSize, true);
+    const ppm = Math.round((opts.dpi || 72) / 0.0254); dv.setInt32(38, ppm, true); dv.setInt32(42, ppm, true);
+    dv.setUint32(46, palette.length, true); dv.setUint32(50, 0, true);
+    palette.forEach((c, i) => { head[54 + i * 4] = c[2]; head[55 + i * 4] = c[1]; head[56 + i * 4] = c[0]; });
+    const lines = new Array(rows.height);
+    for (let j = 0; j < rows.height; j++) {
+      const src = rows.row(j), line = new Uint8Array(stride);
+      if (bpp === 24) for (let i = 0; i < rows.width; i++) { line[i * 3] = src[i * 3 + 2]; line[i * 3 + 1] = src[i * 3 + 1]; line[i * 3 + 2] = src[i * 3]; }
+      else line.set(src.subarray(0, Math.min(src.length, stride)));
+      lines[rows.height - 1 - j] = line;
+      if ((j & 255) === 255) { if (opts.onProgress) opts.onProgress((j + 1) / rows.height); await tick(); }
+    }
+    if (opts.onProgress) opts.onProgress(1);
+    return new Blob([head].concat(lines), { type: 'image/bmp' });
+  };
+
   /* ------------------------------------------------------------ manifest */
   X.manifest = function (set, info) {
     const f = info.frame;
     return JSON.stringify({
-      generator: 'PaperStrata', created: new Date().toISOString(), project: set.name,
+      generator: 'Cutography', created: new Date().toISOString(), project: set.name,
       dpi: f.dpi, inchesPerPixel: 1 / f.dpi, micrometresPerPixel: 25400 / f.dpi, widthPx: f.width, heightPx: f.height,
       widthIn: f.width / f.dpi, heightIn: f.height / f.dpi, mirrored: f.mirror, inverted: !!info.invert,
       boundsIn: set.bounds, note: 'Pixel (0,0) is the top-left of boundsIn. Layers are listed bottom to top; in label images pixel value = layer number of the top-most layer, 0 = no paper.',

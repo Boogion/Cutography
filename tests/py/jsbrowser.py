@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 CANDIDATES = [
-    os.environ.get('PAPERSTRATA_BROWSER', ''),
+    os.environ.get('CUTOGRAPHY_BROWSER', ''),
     r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe',
     r'C:\Program Files\Microsoft\Edge\Application\msedge.exe',
     r'C:\Program Files\Google\Chrome\Application\chrome.exe',
@@ -30,14 +30,17 @@ def run_page(rel_path, budget_ms=120000, timeout=300):
     """Load a repo page from file:// (or an http:// URL as is) and return the text of #out once its script finishes."""
     exe = find_browser()
     if not exe:
-        raise FileNotFoundError('No Edge or Chrome found; set PAPERSTRATA_BROWSER to its path')
+        raise FileNotFoundError('No Edge or Chrome found; set CUTOGRAPHY_BROWSER to its path')
     url = rel_path if rel_path.startswith('http') else (ROOT / rel_path).resolve().as_uri()
-    with tempfile.TemporaryDirectory() as profile:
-        cmd = [exe, '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
-               '--allow-file-access-from-files', '--user-data-dir=' + profile,
-               '--virtual-time-budget=%d' % budget_ms, '--dump-dom', url]
-        out = subprocess.run(cmd, capture_output=True, timeout=timeout).stdout.decode('utf-8', 'replace')
-    m = re.search(r'<pre id="out"[^>]*>(.*?)</pre>', out, re.S)
+    for attempt in (1, 2):   # a cold browser start occasionally returns an empty page; try once more
+        with tempfile.TemporaryDirectory() as profile:
+            cmd = [exe, '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
+                   '--allow-file-access-from-files', '--user-data-dir=' + profile,
+                   '--virtual-time-budget=%d' % budget_ms, '--dump-dom', url]
+            out = subprocess.run(cmd, capture_output=True, timeout=timeout).stdout.decode('utf-8', 'replace')
+        m = re.search(r'<pre id="out"[^>]*>(.*?)</pre>', out, re.S)
+        if m:
+            break
     if not m:
         raise RuntimeError('Test page produced no output:\n' + out[:2000])
     text = m.group(1)

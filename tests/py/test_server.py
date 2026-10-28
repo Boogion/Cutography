@@ -11,7 +11,7 @@ import unittest
 from urllib.parse import quote
 
 import support  # noqa: F401
-from paperstrata import paths, server
+from cutography import paths, server
 
 
 def fake_builder(name, lat, lon, diameter_m, progress=None, site_id=None):
@@ -27,7 +27,7 @@ def fake_builder(name, lat, lon, diameter_m, progress=None, site_id=None):
 class ServerTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.tmp = tempfile.mkdtemp(prefix="paperstrata-test-")
+        cls.tmp = tempfile.mkdtemp(prefix="cutography-test-")
         cls.home = os.path.join(cls.tmp, "home")
         cls.web = os.path.join(cls.tmp, "web")
         os.makedirs(os.path.join(cls.web, "js", "sub"))
@@ -40,10 +40,10 @@ class ServerTest(unittest.TestCase):
                 f.write(v)
         with open(os.path.join(cls.tmp, "secret.txt"), "wb") as f:
             f.write(b"top secret")
-        cls.env = {k: os.environ.get(k) for k in ("PAPERSTRATA_HOME", "PAPERSTRATA_WEB", "PAPERSTRATA_NO_OPEN")}
-        os.environ["PAPERSTRATA_HOME"] = cls.home
-        os.environ["PAPERSTRATA_WEB"] = cls.web
-        os.environ["PAPERSTRATA_NO_OPEN"] = "1"
+        cls.env = {k: os.environ.get(k) for k in ("CUTOGRAPHY_HOME", "CUTOGRAPHY_WEB", "CUTOGRAPHY_NO_OPEN")}
+        os.environ["CUTOGRAPHY_HOME"] = cls.home
+        os.environ["CUTOGRAPHY_WEB"] = cls.web
+        os.environ["CUTOGRAPHY_NO_OPEN"] = "1"
         cls.httpd = server.make_server(0, fallback=False, app=server.App(builder=fake_builder))
         cls.port = cls.httpd.server_address[1]
         cls.thread = threading.Thread(target=cls.httpd.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
@@ -215,8 +215,8 @@ class ServerTest(unittest.TestCase):
         status, h, body = self.req("GET", "/tests/js/smoke.html")
         self.assertEqual(status, 200)
         self.assertTrue(h["content-type"].startswith("text/html"))
-        for p in ("/internal/../paperstrata/server.py", "/internal/%2e%2e/paperstrata/server.py", "/internal/",
-                  "/tests/../paperstrata/server.py", "/tests/%2e%2e/paperstrata/server.py", "/tests/"):
+        for p in ("/internal/../cutography/server.py", "/internal/%2e%2e/cutography/server.py", "/internal/",
+                  "/tests/../cutography/server.py", "/tests/%2e%2e/cutography/server.py", "/tests/"):
             status, _, _ = self.req("GET", p)
             self.assertEqual(status, 404, p)
 

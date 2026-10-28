@@ -1058,7 +1058,7 @@
   function syncSiteControls() {
     const info = SITES.find(s => s.id === SITE.id) || {};
     $('siteTitle').textContent = 'Mask Set: ' + SITE.name;
-    document.title = `Mask Set: ${SITE.name} · PaperStrata`;
+    document.title = `Mask Set: ${SITE.name} · Cutography`;
     const c = SITE.center;
     $('siteNote').textContent = `${Math.abs(c[0]).toFixed(4)}° ${c[0] >= 0 ? 'N' : 'S'}, ${Math.abs(c[1]).toFixed(4)}° ${c[1] >= 0 ? 'E' : 'W'} · ${fmtDia(SITE.diameterM)} across · ${SITE.roads.length} streets, ${SITE.water.length} water features, ${SITE.buildings.length} buildings`;
     $('btnDeleteSite').hidden = info.source !== 'user';
@@ -1200,7 +1200,7 @@
     }
     window.MaskSet.toggleAt = toggleAt;
     ['roads', 'align', 'fields', 'gauge', 'north', 'lettering'].forEach(id => $(id).addEventListener('change', () => { S[id] = $(id).checked; rebuild(); }));
-    $('btnPngW').addEventListener('click', async () => { if (!MODEL) return; PaperStrataIO.download(ExportPanel.slug(projectName()) + '-preview.png', await previewPng(2400)); });
+    $('btnPngW').addEventListener('click', async () => { if (!MODEL) return; CutographyIO.download(ExportPanel.slug(projectName()) + '-preview.png', await previewPng(2400)); });
     $$('[data-copy]').forEach(b => b.addEventListener('click', async () => { const t = $(b.dataset.copy); try { await navigator.clipboard.writeText(t.value); toast('Copied'); } catch (e) { t.select(); toast('Select-all and copy'); } }));
     $('sitePick').addEventListener('change', () => openSite($('sitePick').value));
     window.addEventListener('resize', () => renderPreview());
@@ -1212,8 +1212,8 @@
   window.MaskSet = { matCheck: () => matCheck(MODEL), S, compute, get model() { return MODEL; }, get site() { return SITE; }, rebuild, openSite, layerSet: () => layerSet(), buildSvg: () => buildSvg(MODEL), drawStack, drawExploded, allLayers: () => allLayers(MODEL), setView(v) { S.view = v; renderPreview(); } };
   async function boot() {
     bind();
-    if (!(await PaperStrataIO.hasServer())) {
-      emptyState('The map tool downloads and reads map data through the app. Start PaperStrata with its launcher (see the README), then open the page it shows.');
+    if (!(await CutographyIO.hasServer())) {
+      emptyState('The map tool downloads and reads map data through the app. Start Cutography with its launcher (see the README), then open the page it shows.');
       $('btnNewSite').disabled = true;
       return;
     }

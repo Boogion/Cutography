@@ -5,7 +5,7 @@ import math
 import unittest
 
 import support
-from paperstrata import geom, osm, sitefetch, terrain
+from cutography import geom, osm, sitefetch, terrain
 
 LAT, LON = 10.0, 20.0
 
@@ -204,7 +204,7 @@ class Query(unittest.TestCase):
         self.assertNotIn("coastline", q)
 
     def test_fetch_falls_back(self):
-        from paperstrata import net
+        from cutography import net
         seen = []
 
         def request(url, data=None, timeout=None, headers=None):
@@ -215,8 +215,8 @@ class Query(unittest.TestCase):
                 return b'{"remark": "runtime error: Query timed out", "elements": []}'
             return b'{"elements": [], "osm3s": {}}'
         import os
-        old = os.environ.get("PAPERSTRATA_OVERPASS")
-        os.environ["PAPERSTRATA_OVERPASS"] = "https://first/x,https://second/x,https://third/x"
+        old = os.environ.get("CUTOGRAPHY_OVERPASS")
+        os.environ["CUTOGRAPHY_OVERPASS"] = "https://first/x,https://second/x,https://third/x"
         osm._last_good[0] = None
         try:
             msgs = []
@@ -233,9 +233,9 @@ class Query(unittest.TestCase):
         finally:
             osm._last_good[0] = None
             if old is None:
-                del os.environ["PAPERSTRATA_OVERPASS"]
+                del os.environ["CUTOGRAPHY_OVERPASS"]
             else:
-                os.environ["PAPERSTRATA_OVERPASS"] = old
+                os.environ["CUTOGRAPHY_OVERPASS"] = old
 
 
 class Inputs(unittest.TestCase):

@@ -1,7 +1,7 @@
 """Build a site JSON (schema 1, see docs/site-format.md) for a location.
 
 CLI:
-    python -m paperstrata.sitefetch --name "San Francisco" --coords "37.765, -122.445" \
+    python -m cutography.sitefetch --name "San Francisco" --coords "37.765, -122.445" \
         --diameter 10 --unit km --out sites/san-francisco.json
 """
 import argparse
@@ -344,7 +344,7 @@ def summary(site):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="python -m paperstrata.sitefetch",
+    ap = argparse.ArgumentParser(prog="python -m cutography.sitefetch",
                                  description="Fetch elevation and OpenStreetMap data for a site.")
     ap.add_argument("--name", required=True)
     ap.add_argument("--coords", required=True, help='e.g. "37.765, -122.445" or a Google Maps link')

@@ -1,10 +1,10 @@
-# PaperStrata
+# Cutography
 
 **Turn a photo or any place on Earth into stacked layers you can cut, lay out or print.**
-Works with Cricut®, laser cutters, KLayout, and any tool that reads SVG, PNG or TIFF.
+Works with Cricut®, laser cutters, KLayout, and any tool that reads SVG, PNG, GDS, BMP, or TIFF.
 
-- **From a photo:** pick your paper colors and how many sheets; PaperStrata finds the color regions, drops pieces too small to cut, and stacks them.
-- **From a map:** paste coordinates from Google Maps and choose how wide an area to show; PaperStrata downloads real elevation, streets and water and turns the terrain into one sheet per contour.
+- **From a photo:** pick your paper colors and how many sheets; Cutography finds the color regions, drops pieces too small to cut, and stacks them.
+- **From a map:** paste coordinates from Google Maps and choose how wide an area to show; Cutography downloads real elevation, streets and water and turns the terrain into one sheet per contour.
 
 ### Works with
 
@@ -14,7 +14,7 @@ Works with Cricut®, laser cutters, KLayout, and any tool that reads SVG, PNG or
 | Other cutting machines (Silhouette, Brother ScanNCut) | The per-layer SVGs | Should work in any software that imports SVG (Silhouette needs Designer Edition or higher for SVG); not tested |
 | Laser cutters (LightBurn, Glowforge, xTool) | The per-layer SVGs, one file per sheet of wood, acrylic or paper | Standard SVG; stacked topo maps are a classic laser project; not tested |
 | KLayout and other GDSII tools | `.gds` at true size, one layer per sheet, plus a `.lyp` color file | Tested: the test suite reads every file back with KLayout |
-| Printing, film photomasks, screen-print separations | 1-bit layer masks up to 4800 dpi, mirror and invert | PNG and TIFF with the real dpi recorded |
+| Printing, film photomasks, screen-print separations | 1-bit layer masks up to 4800 dpi, mirror and invert | PNG, TIFF or BMP with the real dpi recorded |
 | ImageJ/Fiji, MATLAB, Python, GIS | Layer masks, a label map (pixel value = layer number) and `scale.json` with the pixel size | Tested: every image is decoded independently in the tests |
 
 Everything runs on your own computer. The app opens in your web browser, but nothing is uploaded anywhere. Only map downloads go online (to fetch elevation, streets and water for the place you choose).
@@ -27,15 +27,15 @@ Everything runs on your own computer. The app opens in your web browser, but not
 
 ### Windows
 
-1. Go to the [**Releases**](../../releases) page and download **PaperStrata-windows.zip**.
-2. Unzip it (right-click → **Extract All**), then double-click **PaperStrata.exe**.
+1. Go to the [**Releases**](../../releases) page and download **Cutography-windows.zip**.
+2. Unzip it (right-click → **Extract All**), then double-click **Cutography.exe**.
 3. If Windows shows *"Windows protected your PC"*, click **More info**, then **Run anyway**. (The program isn't signed with a paid certificate, so Windows doesn't recognise it yet.)
 4. A black window opens and your browser shows the app. **Keep the black window open while you work; close it to quit.**
 
 ### Mac (Apple silicon: M1 and newer)
 
-1. Download **PaperStrata-macos-apple-silicon.zip** from [**Releases**](../../releases) and double-click it to unzip.
-2. **Right-click** (or Control-click) **PaperStrata** and choose **Open**, then **Open** again.
+1. Download **Cutography-macos-apple-silicon.zip** from [**Releases**](../../releases) and double-click it to unzip.
+2. **Right-click** (or Control-click) **Cutography** and choose **Open**, then **Open** again.
    If macOS still refuses, open **System Settings → Privacy & Security**, scroll down, and click **Open Anyway**.
 3. A Terminal window opens and your browser shows the app. **Keep the Terminal window open while you work; close it to quit.**
 
@@ -85,13 +85,13 @@ The terrain comes out as one sheet per contour; streets are cut through every sh
 ## 3. Export
 
 The last step of both tools has the same three cards. With the app running, files are saved to
-**Documents › PaperStrata › output › *your project*** (click **Open folder**). **Save everything** writes all of it at once.
+**Documents › Cutography › output › *your project*** (click **Open folder**). **Save everything** writes all of it at once.
 
 | Card | What you get | Use it for |
 |---|---|---|
 | **Cricut** | One `.svg` with every layer (recommended); one `.svg` or `.png` per layer; a flattened Print Then Cut `.png`; a cut sheet | Cricut Design Space |
 | **KLayout** | A `.gds` layout at true size (layer 1 = bottom sheet), and a `.lyp` file with layer names and paper colors | KLayout, or any GDSII tool |
-| **High-res images** | Per-layer 1-bit masks, a color composite, a label map (pixel value = layer number), plus `scale.json` with the pixel size and layer order. Choose 300–4800 dpi, PNG or TIFF, mirror, invert | Printing, film masks, laser engravers, ImageJ/Fiji, MATLAB, Python |
+| **High-res images** | Per-layer 1-bit masks, a color composite, a label map (pixel value = layer number), plus `scale.json` with the pixel size and layer order. Choose 300–4800 dpi, PNG, TIFF or BMP, mirror, invert | Printing, film masks, laser engravers, ImageJ/Fiji, MATLAB, Python |
 
 ### In Cricut Design Space
 
@@ -127,15 +127,15 @@ Every image records its resolution (dpi), so ImageJ/Fiji (**Image → Properties
 ## For developers
 
 ```
-paperstrata/   the local app (Python standard library only): web server, coordinate parser, map downloader
-web/           the browser app: photo.html, map.html, js/engine.js (image to layers), js/export.js (GDS, PNG, TIFF writers), js/export-ui.js
-sites/         example map data (regenerate with python -m paperstrata.sitefetch, see docs/site-format.md)
+cutography/   the local app (Python standard library only): web server, coordinate parser, map downloader
+web/           the browser app: photo.html, map.html, js/engine.js (image to layers), js/export.js (GDS, PNG, TIFF, BMP writers), js/export-ui.js
+sites/         example map data (regenerate with python -m cutography.sitefetch, see docs/site-format.md)
 tests/         python -m unittest discover -s tests/py -v   (JS checks run in headless Edge/Chrome; pip install klayout for the GDS checks)
 packaging/     PyInstaller spec; .github/workflows/build.yml builds the Windows and Mac programs when a v* tag is pushed
 ```
 
-- Run from source: `python -m paperstrata` (`--port`, `--no-browser`, `--verbose`).
-- Fetch a map from the command line: `python -m paperstrata.sitefetch --name "Rome" --coords "41.8925, 12.4853" --diameter 5 --unit km --out sites/rome.json`
+- Run from source: `python -m cutography` (`--port`, `--no-browser`, `--verbose`).
+- Fetch a map from the command line: `python -m cutography.sitefetch --name "Rome" --coords "41.8925, 12.4853" --diameter 5 --unit km --out sites/rome.json`
 - Map data format: [docs/site-format.md](docs/site-format.md).
 
 ## Credits and licenses
@@ -147,4 +147,4 @@ packaging/     PyInstaller spec; .github/workflows/build.yml builds the Windows 
 - Fonts: IBM Plex and Bricolage Grotesque, SIL Open Font License (web/fonts/).
 - JSZip 3.10.1, MIT license (web/vendor/).
 - Paper colors are approximations; Hello Hobby doesn't publish color values.
-- Cricut, Design Space and Cricut Joy Xtra are trademarks of Cricut, Inc. Silhouette, Brother, ScanNCut, LightBurn, Glowforge, xTool and Hello Hobby are trademarks of their owners. PaperStrata is an independent hobby project and isn't affiliated with or endorsed by any of them; the names only say which tools it works with.
+- Cricut, Design Space and Cricut Joy Xtra are trademarks of Cricut, Inc. Silhouette, Brother, ScanNCut, LightBurn, Glowforge, xTool and Hello Hobby are trademarks of their owners. Cutography is an independent hobby project and isn't affiliated with or endorsed by any of them; the names only say which tools it works with.

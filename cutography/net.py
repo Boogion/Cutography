@@ -6,7 +6,7 @@ import urllib.request
 
 from . import __version__
 
-USER_AGENT = ("PaperStrata/%s (+local desktop app; makes cardstock relief maps; "
+USER_AGENT = ("Cutography/%s (+local desktop app; makes cardstock relief maps; "
               "Python urllib)" % __version__)
 
 _CA_FALLBACKS = ("/etc/ssl/cert.pem", "/etc/ssl/certs/ca-certificates.crt",

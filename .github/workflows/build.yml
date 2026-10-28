@@ -34,9 +34,9 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            asset: PaperStrata-windows.zip
+            asset: Cutography-windows.zip
           - os: macos-latest
-            asset: PaperStrata-macos-apple-silicon.zip
+            asset: Cutography-macos-apple-silicon.zip
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -44,7 +44,7 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install pyinstaller
-      - run: pyinstaller --noconfirm packaging/paperstrata.spec
+      - run: pyinstaller --noconfirm packaging/cutography.spec
       - name: Zip (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -55,7 +55,7 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           cp README.md LICENSE dist/
-          chmod +x dist/PaperStrata
+          chmod +x dist/Cutography
           ditto -c -k --sequesterRsrc dist "${{ matrix.asset }}"
       - uses: softprops/action-gh-release@v2
         with:
