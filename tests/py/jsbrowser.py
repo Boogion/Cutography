@@ -66,21 +66,23 @@ def run_page(page, timeout=600):
     base = 'http://127.0.0.1:%d' % srv.server_address[1]
     url = page if page.startswith('http') else base + '/' + page.replace('\\', '/')
     url += ('&' if '?' in url else '?') + 'report=' + quote(base + '/__result', safe='')
+    profile = tempfile.mkdtemp(prefix='cutography-browser-')
     try:
-        with tempfile.TemporaryDirectory() as profile:
-            cmd = [exe, '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
-                   '--user-data-dir=' + profile, url]
-            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        cmd = [exe, '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
+               '--user-data-dir=' + profile, url]
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            if not srv.done.wait(timeout):
+                raise RuntimeError('%s did not report back within %d s' % (page, timeout))
+        finally:
+            proc.terminate()
             try:
-                if not srv.done.wait(timeout):
-                    raise RuntimeError('%s did not report back within %d s' % (page, timeout))
-            finally:
-                proc.terminate()
-                try:
-                    proc.wait(10)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
+                proc.wait(10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
     finally:
         srv.shutdown()
         srv.server_close()
+        # the browser's helper processes can still be writing to the profile for a moment
+        shutil.rmtree(profile, ignore_errors=True)
     return srv.result
