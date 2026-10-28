@@ -68,7 +68,11 @@ const b64 = async blob => { const b = new Uint8Array(await blob.arrayBuffer()); 
     check('frame', f.width === 350 && f.height === 200, [f.width, f.height]);
   } catch (e) { checks.error = { ok: false, detail: String(e) + '\n' + e.stack }; }
   const ok = Object.values(checks).every(c => c.ok);
-  document.getElementById('out').textContent = JSON.stringify({ ok, checks, files });
+  const resultText = JSON.stringify({ ok, checks, files });
+  document.getElementById('out').textContent = resultText;
+  // tests/py/jsbrowser.py waits for this POST (the page's ?report= URL)
+  const reportTo = new URLSearchParams(location.search).get('report');
+  if (reportTo) fetch(reportTo, { method: 'POST', mode: 'no-cors', body: resultText });
   document.title = ok ? 'PASS' : 'FAIL';
 })();
 </script>

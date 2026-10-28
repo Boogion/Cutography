@@ -26,7 +26,7 @@ class Smoke(unittest.TestCase):
         cls.httpd = server.make_server(0, fallback=False)
         threading.Thread(target=cls.httpd.serve_forever, kwargs={'poll_interval': 0.05}, daemon=True).start()
         url = 'http://127.0.0.1:%d/tests/js/smoke.html' % cls.httpd.server_address[1]
-        cls.r = json.loads(run_page(url, budget_ms=600000, timeout=900))
+        cls.r = json.loads(run_page(url, timeout=900))
 
     @classmethod
     def tearDownClass(cls):

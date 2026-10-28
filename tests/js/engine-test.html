@@ -114,5 +114,9 @@ try {
   }
   results.ALL_OK = true;
 } catch (e) { results.error = String(e) + '\n' + e.stack; }
-document.getElementById('out').textContent = JSON.stringify(results, null, 1);
+const resultText = JSON.stringify(results, null, 1);
+document.getElementById('out').textContent = resultText;
+// tests/py/jsbrowser.py waits for this POST (the page's ?report= URL)
+const reportTo = new URLSearchParams(location.search).get('report');
+if (reportTo) fetch(reportTo, { method: 'POST', mode: 'no-cors', body: resultText });
 </script>
