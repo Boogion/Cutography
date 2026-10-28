@@ -60,6 +60,10 @@ If the browser doesn't open, go to **http://127.0.0.1:8765** yourself.
 
 ## 2. Make something
 
+First choose **what you're making** (paper stack, grayscale relief, structural color, or layers only), then start from a photo or a map.
+
+![The home page: choose what you're making, then a photo or a map](docs/images/home.png)
+
 ### From a photo
 
 ![The photo tool](docs/images/photo.png)
@@ -73,6 +77,12 @@ If the browser doesn't open, go to **http://127.0.0.1:8765** yourself.
 ### Grayscale relief and structural color
 
 On the home page, choose **Grayscale relief** or **Structural color** before picking a photo or a map. The first step then asks for your process (resist only, lift-off, etch or TiO₂), materials and limits (smallest feature, height range, number of levels), and everything after follows from them: the palette is gray levels or nanostructures, sizes are in µm or mm, and the export step writes GDS and BMP files for BEAMER. Full details: [docs/lithography.md](docs/lithography.md).
+
+![Grayscale relief: the fabrication setup and the sunflower as 8 dose levels](docs/images/grayscale.png)
+
+![Structural color: the sunflower in TiO₂ pillar colors, with the process and limits it was designed for](docs/images/structural-color.png)
+
+![Sydney Harbour as 8 grayscale levels for a 500 µm field](docs/images/map-grayscale.png)
 
 ### From a map
 
