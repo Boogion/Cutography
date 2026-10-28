@@ -1,0 +1,76 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>smoke</title>
+<pre id="out">running</pre>
+<script>
+/* End-to-end smoke test, served by the local app (tests/py/test_smoke.py starts it):
+   loads the real photo and map pages in iframes, waits for them to build, and runs every exporter on
+   what they produced. Prints JSON (GDS files as base64) for the Python side to check with KLayout. */
+const out = { photo: {}, maps: {}, errors: [] };
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const b64 = async blob => { const b = new Uint8Array(await blob.arrayBuffer()); let s = ''; for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000)); return btoa(s); };
+function frame(src) {
+  return new Promise((res, rej) => {
+    const f = document.createElement('iframe'); f.style.width = '1400px'; f.style.height = '900px';
+    f.onload = () => res(f.contentWindow); f.onerror = rej; f.src = src; document.body.appendChild(f);
+  });
+}
+async function until(fn, ms, what) {
+  const t0 = Date.now();
+  for (;;) { let v; try { v = fn(); } catch (e) { v = null; } if (v) return v; if (Date.now() - t0 > ms) throw new Error('timed out waiting for ' + what); await sleep(100); }
+}
+function summarize(set) {
+  return { name: set.name, bounds: set.bounds.map(v => +v.toFixed(4)), layers: set.layers.map(L => ({ name: L.name, hex: L.hex, loops: L.loops.length, points: L.loops.reduce((a, l) => a + l.length / 2, 0) })) };
+}
+async function exportAll(w, set, key) {
+  const X = w.CutExport, r = {};
+  const gds = X.gds(set, { labels: true });
+  r.gds = await b64(new Blob([gds])); r.gdsStats = gds.stats;
+  const f = X.frame(set, 150);
+  // pixel area of each layer's mask at 150 dpi, to compare with KLayout's polygon area
+  r.maskIn2 = set.layers.map(L => { const rows = X.maskRows(L.loops, f); let on = 0; for (let j = 0; j < f.height; j++) { const row = rows.row(j); for (let i = 0; i < row.length; i++) { let b = row[i]; while (b) { on += b & 1; b >>= 1; } } } return on / (150 * 150); });
+  const png = await X.png(X.labelRows(set, f), { kind: 'index8', palette: [[255, 255, 255]].concat(set.layers.map(L => X.hexRgb(L.hex))), transparent: [0], dpi: 150 });
+  const tif = await X.tiff(X.rgbRows(set, f, '#ffffff'), { kind: 'rgb', dpi: 150 });
+  r.pngBytes = png.size; r.tiffBytes = tif.size; r.frame = [f.width, f.height];
+  return r;
+}
+
+(async () => {
+  try {
+    // --- photo tool: boots on the first example photo
+    const pw = await frame('/photo.html');
+    await until(() => pw.CutStudio && pw.CutStudio.state.result && pw.CutStudio.state.result.layers.length, 60000, 'the photo pipeline');
+    await sleep(500);
+    const st = pw.CutStudio.state, set = pw.CutStudio.buildLayerSet();
+    out.photo = { image: st.image && st.image.name, layers: st.result.layers.length, svgLen: pw.CutStudio.buildCombinedSvg().length, set: summarize(set) };
+    Object.assign(out.photo, await exportAll(pw, set, 'photo'));
+    out.photo.areaIn2 = st.result.layers.map(L => +L.areaIn2.toFixed(3));
+    // the real button: "Save everything" writes every file through the app into the project folder
+    pw.CutStudio.goStep(5);
+    pw.document.querySelector('[data-opt="dpi"]').value = '300';
+    pw.document.querySelector('[data-opt="label"]').checked = true;
+    pw.document.querySelector('[data-act="all"]').click();
+    await until(() => !pw.document.querySelector('[data-slot="saved"]').hidden, 180000, 'Save everything');
+    out.photo.saved = pw.document.querySelector('[data-slot="saved"]').textContent;
+
+    // --- map tool: every listed site
+    const mw = await frame('/map.html');
+    await until(() => mw.MaskSet && mw.MaskSet.model, 120000, 'the first map');
+    const list = await (await fetch('/api/sites')).json();
+    for (const s of list.sites) {
+      try {
+        const before = mw.MaskSet.model;
+        await mw.MaskSet.openSite(s.id);
+        await until(() => mw.MaskSet.model !== before && mw.MaskSet.site.id === s.id, 120000, 'map ' + s.id);
+        await sleep(200);
+        const M = mw.MaskSet.model, mset = mw.MaskSet.layerSet();
+        const r = { source: s.source, scale: Math.round(M.scale), interval: Math.round(M.interval), eMin: Math.round(M.eMin), eMax: Math.round(M.eMax), stats: M.stats, water: !!M.water, sheets: M.sheets.map(x => x.pieces), mat: mw.MaskSet.matCheck().ok, set: summarize(mset) };
+        Object.assign(r, await exportAll(mw, mset, s.id));
+        out.maps[s.id] = r;
+      } catch (e) { out.errors.push(s.id + ': ' + e.message); }
+    }
+  } catch (e) { out.errors.push(String(e) + '\n' + (e.stack || '')); }
+  document.getElementById('out').textContent = JSON.stringify(out);
+  document.title = out.errors.length ? 'FAIL' : 'DONE';
+})();
+</script>

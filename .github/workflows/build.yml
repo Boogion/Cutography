@@ -1,0 +1,62 @@
+# Tests on every push and pull request. Pushing a tag like v0.1.0 also builds the Windows and macOS
+# programs and attaches them to a GitHub Release.
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install the KLayout reader used by the GDS checks (tests only)
+        run: python -m pip install klayout
+      - name: Run tests
+        run: python -m unittest discover -s tests/py -v
+
+  package:
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write   # to create the release and upload the programs
+    needs: test
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            asset: PaperStrata-windows.zip
+          - os: macos-latest
+            asset: PaperStrata-macos-apple-silicon.zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install pyinstaller
+      - run: pyinstaller --noconfirm packaging/paperstrata.spec
+      - name: Zip (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Copy-Item README.md, LICENSE dist/
+          Compress-Archive -Path dist/* -DestinationPath ${{ matrix.asset }}
+      - name: Zip (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          cp README.md LICENSE dist/
+          chmod +x dist/PaperStrata
+          ditto -c -k --sequesterRsrc dist "${{ matrix.asset }}"
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.asset }}

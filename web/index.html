@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PaperStrata</title>
+<link rel="stylesheet" href="css/fonts.css">
+<link rel="stylesheet" href="css/styles.css">
+<style>
+  .home { max-width: 980px; margin: 0 auto; padding: 32px 16px 48px; display: grid; gap: 28px; }
+  .home h1 { font-family: var(--font-display); font-size: clamp(28px, 5vw, 40px); line-height: 1.1; }
+  .home .lede { color: var(--muted); font-size: 16px; max-width: 60ch; margin-top: 8px; }
+  .choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+  .choice { display: grid; gap: 10px; padding: 20px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); color: var(--ink); text-decoration: none; }
+  .choice:hover { border-color: var(--ink); }
+  .choice h2 { font-family: var(--font-display); font-size: 22px; }
+  .choice p { color: var(--muted); font-size: 14px; }
+  .choice .go { color: var(--accent); font-weight: 600; font-size: 14px; }
+  .choice svg { width: 100%; height: auto; display: block; border-radius: 6px; background: var(--panel-2); }
+  .outs { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+  .out { padding: 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); font-size: 13.5px; display: grid; gap: 4px; }
+  .out b { font-size: 14px; }
+  .out span { color: var(--muted); }
+  .warnbox { padding: 12px 14px; border: 1px solid var(--warn); border-radius: 8px; color: var(--ink); background: var(--panel); font-size: 14px; }
+  footer.credits { color: var(--muted); font-size: 12px; }
+  footer.credits a { color: inherit; }
+</style>
+</head>
+<body>
+<main class="home">
+  <header>
+    <h1>PaperStrata</h1>
+    <p class="lede">Turn a photo or any place on Earth into stacked layers you can cut, lay out or print. Works with Cricut®, laser cutters, KLayout, and any tool that reads SVG, PNG or TIFF.</p>
+  </header>
+
+  <div class="warnbox" id="noServer" hidden>
+    You opened this page straight from the folder. The photo tool works, but example photos and the map tool need the app running: double-click <b>PaperStrata</b> (or <code>start.bat</code> / <code>start.command</code>), then use the page it opens.
+  </div>
+
+  <section class="choices">
+    <a class="choice" href="photo.html">
+      <svg viewBox="0 0 300 150" aria-hidden="true">
+        <rect x="0" y="0" width="300" height="150" fill="#bcd9ee"/>
+        <path d="M0 110 Q60 70 120 95 T300 85 V150 H0Z" fill="#9bb493"/>
+        <path d="M0 125 Q80 100 160 120 T300 112 V150 H0Z" fill="#2f6b45"/>
+        <circle cx="225" cy="45" r="22" fill="#f6d035"/>
+      </svg>
+      <h2>Start from a photo</h2>
+      <p>Pick your paper colors, load a picture, and choose how many sheets. The app finds the color regions, cleans up pieces too small to cut, and stacks them.</p>
+      <span class="go">Open the photo tool →</span>
+    </a>
+    <a class="choice" href="map.html">
+      <svg viewBox="0 0 300 150" aria-hidden="true">
+        <rect x="0" y="0" width="300" height="150" fill="#f0ece3"/>
+        <circle cx="150" cy="75" r="66" fill="#cfd3da"/>
+        <path d="M100 40 L190 30 L215 75 L180 120 L110 112 L88 75Z" fill="#f7f6f2" stroke="#bfb6a4"/>
+        <path d="M125 55 L175 50 L190 78 L165 100 L125 95 L112 75Z" fill="#fbfaf6" stroke="#bfb6a4"/>
+        <path d="M84 90 Q120 80 150 100 T216 96" stroke="#6f93cf" stroke-width="6" fill="none"/>
+      </svg>
+      <h2>Start from a map</h2>
+      <p>Paste coordinates from Google Maps and choose how wide an area to show. The app downloads real elevation, streets and water, and turns the terrain into one sheet per contour.</p>
+      <span class="go">Open the map tool →</span>
+    </a>
+  </section>
+
+  <section>
+    <h2 class="sub-h">What you get</h2>
+    <div class="outs">
+      <div class="out"><b>Cricut</b><span>One SVG with every layer for Design Space, plus per-layer SVGs or PNGs and a Print Then Cut image.</span></div>
+      <div class="out"><b>KLayout</b><span>A GDSII layout at true size, one layer number per sheet, with a layer file that names each sheet and shows its paper color.</span></div>
+      <div class="out"><b>High-res images</b><span>Black-and-white layer masks, a color composite and a label map at up to 4800 dpi, as PNG or TIFF, with a scale file.</span></div>
+    </div>
+  </section>
+
+  <footer class="credits">
+    Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a> (ODbL). Elevation: AWS Terrain Tiles (Mapzen / Tilezen; sources include USGS 3DEP, SRTM, GMTED and ETOPO1).
+    Example photos are public domain or CC0; see <a href="examples/photos/CREDITS.md" target="_blank">credits</a>.
+    Cricut® is a trademark of Cricut, Inc.; PaperStrata is an independent project, not affiliated with or endorsed by Cricut.
+  </footer>
+</main>
+<script>
+  if (location.protocol === 'file:') document.getElementById('noServer').hidden = false;
+</script>
+</body>
+</html>

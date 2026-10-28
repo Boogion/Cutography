@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PaperStrata</title>
+<link rel="stylesheet" href="css/fonts.css">
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div>
+    <h1>PaperStrata</h1>
+    <div class="sub">Photo → paper layers → Cricut Joy Xtra</div>
+  </div>
+  <nav class="stepbar" id="stepBar" aria-label="Steps">
+    <button class="stepbtn" data-step="1"><span>1</span>Paper</button>
+    <button class="stepbtn" data-step="2"><span>2</span>Photo</button>
+    <button class="stepbtn" data-step="3"><span>3</span>Look</button>
+    <button class="stepbtn" data-step="4"><span>4</span>Refine</button>
+    <button class="stepbtn" data-step="5"><span>5</span>Cut</button>
+  </nav>
+  <div class="spacer"></div>
+  <a class="btn sm" href="index.html" style="text-decoration:none;color:var(--ink)">← Home</a>
+  <span class="chip" id="fitChip">No image</span>
+  <span class="chip" id="layerChip">0 layers</span>
+</header>
+
+<main class="workspace wizard">
+
+  <!-- ============================ preview (always visible) -->
+  <section class="stage" aria-label="Preview">
+    <div class="toolbar">
+      <div class="group" id="viewTabs">
+        <button class="btn" data-view="original">Original</button>
+        <button class="btn active" data-view="mapped">Mapped</button>
+        <button class="btn" data-view="layers">Layers</button>
+        <button class="btn" data-view="vector">Cut file</button>
+        <button class="btn" data-view="sheet">Sheet</button>
+        <button class="btn" data-view="cuts">Cuts</button>
+      </div>
+      <span class="sep"></span>
+      <div class="group" id="toolGroup" title="Manual coloring tools">
+        <button class="btn active" data-tool="pick" title="Click a region to select its layer">Pick</button>
+        <button class="btn" data-tool="fill" title="Click a region to recolor it with the paint color">Fill</button>
+        <button class="btn" data-tool="brush" title="Paint with the paint color">Brush</button>
+        <button class="btn" data-tool="erase" title="Remove manual edits under the brush">Erase</button>
+      </div>
+      <label>Size <input type="range" id="brushSize" min="2" max="80" value="14"> <span class="num" id="brushSizeVal">14</span></label>
+      <span class="sep"></span>
+      <label>Paint</label>
+      <div class="paint-strip" id="paintStrip"></div>
+      <span class="sep"></span>
+      <button class="btn sm" id="btnUndo" title="Undo last manual edit">Undo</button>
+      <button class="btn sm" id="btnClearEdits">Clear edits</button>
+    </div>
+
+    <div class="canvas-wrap" id="canvasWrap">
+      <canvas id="stageCanvas" width="16" height="16"></canvas>
+      <div class="cuts-grid" id="cutsGrid" hidden></div>
+      <div class="drop" id="dropHint" hidden>Drop image to load</div>
+      <div class="busy" id="busy" hidden>Working…</div>
+    </div>
+
+    <div class="stack-ctl" id="stackCtl" hidden>
+      <span>Build-up</span>
+      <input type="range" id="stackSlider" min="0" max="1" value="1">
+      <span class="num" id="stackLabel"></span>
+    </div>
+
+    <div class="statusline" id="status"></div>
+  </section>
+
+  <!-- ============================ steps -->
+  <section class="panel steps-panel" aria-label="Steps">
+
+    <!-- STEP 1 -->
+    <div class="step" data-step="1">
+      <header class="step-head"><h2>1 · Which paper do you have?</h2><p>Turn off any pad or sheet you don't own. Right-click a swatch to toggle it; click it to edit. Default colors are approximations of the Hello Hobby pads; <b>Sample from photo</b> replaces them with colors measured from your real sheets.</p></header>
+      <div id="packs"></div>
+      <div class="btns">
+        <button class="btn" id="btnAddPack">+ Pack</button>
+        <button class="btn" id="btnSample">Sample from photo</button>
+        <button class="btn" id="btnExportPal">Export palette</button>
+        <button class="btn" id="btnImportPal">Import palette</button>
+        <input type="file" id="fileImportPal" accept="application/json" hidden>
+        <button class="btn" id="btnResetPal">Reset defaults</button>
+      </div>
+      <div class="step-nav"><span></span><button class="btn primary" data-go="2">Next: Photo →</button></div>
+    </div>
+
+    <!-- STEP 2 -->
+    <div class="step" data-step="2">
+      <header class="step-head"><h2>2 · Choose a photo</h2><p>Flat, well-lit images with a few clear regions cut best. Transparent PNGs keep their background empty.</p></header>
+      <div class="upload-box" id="uploadBox">
+        <label class="btn primary big" for="fileImage">Upload image…</label>
+        <input type="file" id="fileImage" accept="image/*" hidden>
+        <span class="note">or drop it on the preview, or paste it</span>
+        <label class="btn" for="fileProject">Open a saved project…</label>
+        <input type="file" id="fileProject" accept="application/json" hidden>
+      </div>
+      <div class="examples">
+        <span class="note">Or start from an example (public domain photos, see <a href="examples/photos/CREDITS.md" target="_blank">credits</a>):</span>
+        <div class="example-strip" id="examplePhotos"></div>
+      </div>
+      <div class="row">
+        <label for="widthIn">Finished width (in)</label>
+        <input type="number" id="widthIn" min="0.5" max="48" step="0.05" value="7">
+        <label>Finished height</label><span class="val" id="heightOut">—</span>
+      </div>
+      <p class="note" id="fitNote"></p>
+      <p class="note">Loaded: <span id="imageTag">nothing yet</span></p>
+      <details class="adv">
+        <summary>Advanced: machine limits and resolution</summary>
+        <div class="section-body">
+          <div class="row">
+            <label for="workRes">Working resolution</label>
+            <select id="workRes">
+              <option value="600">600 px (fast)</option>
+              <option value="900">900 px</option>
+              <option value="1200" selected>1200 px</option>
+              <option value="1600">1600 px (slow)</option>
+            </select>
+            <label for="matW">Mat cut area (in)</label>
+            <span><input type="number" id="matW" step="0.01" value="8.2" style="width:72px"> × <input type="number" id="matH" step="0.01" value="10.7" style="width:72px"></span>
+            <label for="ptcW">Print Then Cut (in)</label>
+            <span><input type="number" id="ptcW" step="0.01" value="7.44" style="width:72px"> × <input type="number" id="ptcH" step="0.01" value="9.94" style="width:72px"></span>
+          </div>
+        </div>
+      </details>
+      <div class="step-nav"><button class="btn" data-go="1">← Paper</button><button class="btn primary" data-go="3">Next: Look →</button></div>
+    </div>
+
+    <!-- STEP 3 -->
+    <div class="step" data-step="3">
+      <header class="step-head"><h2>3 · Pick a look</h2><p>Choose what matters most, then how many sheets. Every tile is a complete setup; the recommended one is outlined and already applied.</p></header>
+      <div class="look-cards" id="lookCards">
+        <label class="look-card"><input type="radio" name="look" value="true" checked><b>True to color</b><span>Each region takes the closest sheet you own. Best for flat art, logos, illustrations.</span></label>
+        <label class="look-card"><input type="radio" name="look" value="contrast"><b>High contrast</b><span>Regions are spread across light and dark sheets so every feature stands out. Best for photos and portraits.</span></label>
+        <label class="look-card"><input type="radio" name="look" value="poster"><b>Poster bands</b><span>Light-to-dark bands through sheets of your choice. The classic layered-portrait look.</span></label>
+      </div>
+      <div class="look-row-head"><b>How many sheets?</b><span class="note" id="lookNote"></span></div>
+      <div class="look-row" id="lookRow"></div>
+      <div class="btns"><button class="btn" id="btnExplore">Explore all 64 setups…</button></div>
+      <div class="step-nav"><button class="btn" data-go="2">← Photo</button><button class="btn primary" data-go="4">Next: Refine →</button></div>
+    </div>
+
+    <!-- STEP 4 -->
+    <div class="step" data-step="4">
+      <header class="step-head"><h2>4 · Refine</h2><p>Swap any paper, fix a region by hand with <b>Fill</b> or <b>Brush</b> on the preview, and read the suggestions. Most images need nothing here.</p></header>
+      <div id="suggestions" class="suggestions"></div>
+      <h3 class="sub-h">Detected colors → paper</h3>
+      <div class="cluster-table" id="clusterTable"></div>
+      <h3 class="sub-h">Sheets, bottom to top</h3>
+      <div class="order-note">Drag rows or use ▲▼. Uncheck to leave a color out.</div>
+      <div class="layer-list" id="layerList"></div>
+      <h3 class="sub-h">Quick controls</h3>
+      <div class="row"><label for="maxPieces">Max pieces per sheet (0 = no limit)</label><span class="val" data-val="maxPieces">3</span><input type="range" id="maxPieces" min="0" max="10" step="1" value="3"></div>
+      <div class="row"><label for="minFeature">Thinnest feature (in)</label><span class="val" data-val="minFeature">0.08</span><input type="range" id="minFeature" min="0" max="0.2" step="0.01" value="0.08"></div>
+      <label class="check"><input type="checkbox" id="edgeOn"> Add an outline sheet on top</label>
+      <div class="row" id="edgeRow">
+        <label for="edgeColor">Outline paper</label><select id="edgeColor"></select>
+        <label for="edgeWidth">Line width (in)</label><span class="val" data-val="edgeWidth">0.06</span><input type="range" id="edgeWidth" min="0.02" max="0.25" step="0.01" value="0.06">
+      </div>
+
+      <details class="adv">
+        <summary>Advanced settings</summary>
+        <div class="section-body">
+          <h3 class="sub-h">Photo</h3>
+          <div class="row"><label for="brightness">Brightness</label><span class="val" data-val="brightness">0</span><input type="range" id="brightness" min="-100" max="100" value="0"></div>
+          <div class="row"><label for="contrast">Contrast</label><span class="val" data-val="contrast">0</span><input type="range" id="contrast" min="-100" max="100" value="0"></div>
+          <div class="row"><label for="saturation">Saturation</label><span class="val" data-val="saturation">0</span><input type="range" id="saturation" min="-100" max="100" value="0"></div>
+          <div class="row"><label for="blur">Pre-blur (px)</label><span class="val" data-val="blur">1</span><input type="range" id="blur" min="0" max="8" value="1"></div>
+          <label class="check"><input type="checkbox" id="autoLevels"> Auto levels</label>
+          <div class="row"><label for="localContrast">Local contrast</label><span class="val" data-val="localContrast">0</span><input type="range" id="localContrast" min="0" max="100" value="0"></div>
+          <div class="row"><label for="edgeSmooth">Edge-preserving smoothing</label><span class="val" data-val="edgeSmooth">0</span><input type="range" id="edgeSmooth" min="0" max="3" value="0"></div>
+
+          <h3 class="sub-h">Color matching <span class="tag" id="matchTag"></span></h3>
+          <div class="row">
+            <label for="mode">Method</label>
+            <select id="mode">
+              <option value="cluster" selected>Detect colors, then match to paper</option>
+              <option value="nearest">Nearest paper color per pixel</option>
+              <option value="tones">Light/dark tone bands</option>
+            </select>
+            <label for="assign">Paper assignment</label>
+            <select id="assign"><option value="nearest" selected>Closest color</option><option value="contrast">Spread for contrast</option></select>
+          </div>
+          <div class="row" id="kRow"><label for="k">Colors to detect</label><span class="val" data-val="k">6</span><input type="range" id="k" min="2" max="16" value="6"></div>
+          <div class="row">
+            <label for="deltaE">Color distance</label>
+            <select id="deltaE"><option value="2000" selected>CIEDE2000 (perceptual)</option><option value="76">CIE76 (simple Lab)</option></select>
+          </div>
+          <div class="row" id="mergeRow"><label for="merge">Merge similar colors (ΔE)</label><span class="val" data-val="merge">8</span><input type="range" id="merge" min="0" max="25" step="1" value="8"></div>
+          <div class="row" id="minShareRow"><label for="minShare">Ignore colors under (% of image)</label><span class="val" data-val="minShare">1</span><input type="range" id="minShare" min="0" max="6" step="0.25" value="1"></div>
+          <label class="check" id="uniqueRow"><input type="checkbox" id="unique" checked> Prefer a different sheet per detected color when one is nearly as close</label>
+          <div class="row" id="toneRow" hidden>
+            <label for="toneSpread">Band spacing</label>
+            <select id="toneSpread"><option value="quantile" selected>Equal pixel counts</option><option value="equal">Equal lightness steps</option></select>
+            <span class="note" style="grid-column:1/-1">Bands run dark → light through the checked papers, ordered by lightness.</span>
+            <div id="toneList" class="cluster-table" style="grid-column:1/-1"></div>
+          </div>
+
+          <h3 class="sub-h">Outline <span class="tag" id="edgeTag">off</span></h3>
+          <div class="row">
+            <label for="edgeSource">Source</label>
+            <select id="edgeSource"><option value="photo" selected>Photo edges (Sobel)</option><option value="regions">Boundaries between colors</option></select>
+          </div>
+          <div class="row"><label for="edgeSens">Sensitivity</label><span class="val" data-val="edgeSens">35</span><input type="range" id="edgeSens" min="1" max="99" value="35"></div>
+
+          <h3 class="sub-h">Cleanup <span class="tag" id="cleanTag"></span></h3>
+          <div class="row"><label for="minPiece">Smallest piece (in²)</label><span class="val" data-val="minPiece">0.02</span><input type="range" id="minPiece" min="0" max="0.25" step="0.005" value="0.02"></div>
+          <div class="row"><label for="smoothR">Smooth regions (px)</label><span class="val" data-val="smoothR">1</span><input type="range" id="smoothR" min="0" max="4" value="1"></div>
+          <div class="row"><label for="tol">Path simplification (px)</label><span class="val" data-val="tol">1</span><input type="range" id="tol" min="0" max="4" step="0.1" value="1"></div>
+          <div class="row"><label for="round">Corner rounding</label><span class="val" data-val="round">0</span><input type="range" id="round" min="0" max="3" value="0"></div>
+          <label class="check"><input type="checkbox" id="curves" checked> Write smooth curves (Bézier) in the cut file</label>
+          <p class="note">Cut tolerances for 65 lb cardstock on the Joy Xtra: necks narrower than about 0.08 in tear, slits narrower than that close up, pieces under 0.02 in² fall off the mat.</p>
+
+          <h3 class="sub-h">Layering <span class="tag" id="layerTag"></span></h3>
+          <div class="row">
+            <label for="layerMode">Build</label>
+            <select id="layerMode">
+              <option value="stacked" selected>Stacked: each sheet carries everything above it</option>
+              <option value="inlay">Inlay: flat puzzle pieces side by side</option>
+            </select>
+          </div>
+          <div class="row" id="underlapRow" hidden><label for="underlap">Underlap (in)</label><span class="val" data-val="underlap">0.03</span><input type="range" id="underlap" min="0" max="0.15" step="0.005" value="0.03"></div>
+          <label class="check"><input type="checkbox" id="backingOn"> Add a full-silhouette backing sheet</label>
+          <div class="row" id="backingRow" hidden>
+            <label for="backingColor">Backing paper</label><select id="backingColor"></select>
+            <label for="backingOffset">Backing border (in)</label><span class="val" data-val="backingOffset">0</span><input type="range" id="backingOffset" min="0" max="0.4" step="0.01" value="0">
+          </div>
+          <label class="check"><input type="checkbox" id="regMarks"> Registration squares in the corners of every sheet</label>
+          <div class="row" id="marginRow" hidden><label for="marginIn">Margin for marks (in)</label><span class="val" data-val="marginIn">0.25</span><input type="range" id="marginIn" min="0.1" max="0.6" step="0.05" value="0.25"></div>
+          <div class="row">
+            <label for="autoOrder">Auto order</label>
+            <span class="btns">
+              <select id="autoOrder"><option value="coverage">Largest at bottom</option><option value="dark">Dark at bottom</option><option value="light">Light at bottom</option></select>
+              <button class="btn sm" id="btnAutoOrder">Apply</button>
+            </span>
+          </div>
+        </div>
+      </details>
+      <div class="step-nav"><button class="btn" data-go="3">← Look</button><button class="btn primary" data-go="5">Next: Cut →</button></div>
+    </div>
+
+    <!-- STEP 5 -->
+    <div class="step" data-step="5">
+      <header class="step-head"><h2>5 · Cut it</h2><p>The preview shows each sheet drawn from the cut file itself (the <b>Cut file</b> tab shows all sheets together). Every export below uses those same outlines.</p></header>
+      <div id="exportPanel"></div>
+      <div class="btns"><button class="btn sm" id="btnProject">Save project (.json)</button> <span class="note">reopen it later from step 2</span></div>
+      <div class="steps">
+        <b>In Cricut Design Space</b>
+        <ol>
+          <li><b>Upload → Upload image → Browse</b>, pick the .svg, choose <b>Cut image</b>, Upload, <b>Add to canvas</b>.</li>
+          <li>With it selected, set <b>W</b> to the sheet width from the cut sheet below (lock on), then <b>Ungroup</b> once.</li>
+          <li><b>Make It</b>. Each color gets its own mat. Load that cardstock and use the material setting from the cut sheet.</li>
+          <li>Cut every mat, then glue the sheets bottom to top. Every sheet shares the same 8.5 × 11 frame, so they line up.</li>
+        </ol>
+        <span class="note">Want it printed instead of layered? Upload the <b>Print Then Cut image</b> as an image (Complex), and Design Space will print it and cut the outline on white cardstock, up to 7.44 × 9.94 in on the Joy Xtra.</span>
+      </div>
+      <h3 class="sub-h">Cut sheet</h3>
+      <textarea class="cut-sheet" id="cutSheet" readonly spellcheck="false"></textarea>
+      <div class="btns"><button class="btn sm" id="btnCopySheet">Copy cut sheet</button></div>
+      <div class="step-nav"><button class="btn" data-go="4">← Refine</button><span></span></div>
+    </div>
+
+  </section>
+</main>
+
+<!-- sample colors from a photo -->
+<div class="modal" id="sampleModal" hidden>
+  <div class="box">
+    <h3>Sample colors from a photo</h3>
+    <p class="note">Load a photo of your cardstock (flat, daylight, no flash). Click on each sheet to add its averaged color to the chosen pack. Add a sheet of plain white in the shot to judge the cast.</p>
+    <div class="btns">
+      <label class="btn primary" for="sampleFile">Choose photo…</label>
+      <input type="file" id="sampleFile" accept="image/*" hidden>
+      <label>Add to <select id="samplePack"></select></label>
+      <label>Patch <select id="samplePatch"><option value="5">5 px</option><option value="11" selected>11 px</option><option value="25">25 px</option></select></label>
+    </div>
+    <canvas id="sampleCanvas" width="16" height="16"></canvas>
+    <div class="sampled" id="sampledList"></div>
+    <div class="btns"><button class="btn primary" id="btnSampleDone">Done</button></div>
+  </div>
+</div>
+
+<!-- explorer -->
+<div class="modal" id="exploreModal" hidden>
+  <div class="box wide">
+    <h3>All 64 setups</h3>
+    <p class="note">Rows: how many sheets. Columns: how the photo is prepared. Each tile shows color error (ΔE, lower is truer), how much of the photo's structure survives, and the piece count. The top three are outlined. Click a tile to use it.</p>
+    <div class="note" id="exploreProgress"></div>
+    <div class="ex-scroll"><div class="ex-grid" id="exploreGrid"></div></div>
+    <div class="btns"><button class="btn" id="btnExploreRerun">Re-run</button><button class="btn primary" id="btnExploreClose">Close</button></div>
+  </div>
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<script src="vendor/jszip.min.js"></script>
+<script src="js/engine.js"></script>
+<script src="js/export.js"></script>
+<script src="js/export-ui.js"></script>
+<script src="js/palettes.js"></script>
+<script src="js/photo.js"></script>
+</body>
+</html>

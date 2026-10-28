@@ -1,0 +1,118 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>engine tests</title>
+<script src="../../web/js/engine.js"></script>
+<script src="../../web/js/palettes.js"></script>
+<pre id="out"></pre>
+<script>
+const E = CutEngine;
+const results = {};
+const log = (k, v) => { results[k] = v; };
+try {
+  // 1. square mask -> one clockwise loop with 4 points
+  {
+    const w = 8, h = 8, m = new Uint8Array(w * h);
+    for (let y = 2; y < 6; y++) for (let x = 2; x < 6; x++) m[y * w + x] = 1;
+    const loops = E.traceMask(m, w, h);
+    log('square', { loops: loops.length, pts: loops[0].length / 2, area: E.loopArea(loops[0]) });
+  }
+  // 2. ring (square with hole) -> 2 loops, one positive one negative
+  {
+    const w = 10, h = 10, m = new Uint8Array(w * h);
+    for (let y = 1; y < 9; y++) for (let x = 1; x < 9; x++) m[y * w + x] = 1;
+    for (let y = 4; y < 6; y++) for (let x = 4; x < 6; x++) m[y * w + x] = 0;
+    const r = E.maskToLoops(m, w, h, { tolerance: 0, round: 0 });
+    log('ring', { loops: r.loops.length, pieces: r.pieces, holes: r.holes, areas: r.loops.map(l => l.area) });
+  }
+  // 3. diagonal-touching pixels -> 2 pieces
+  {
+    const w = 4, h = 4, m = new Uint8Array(w * h);
+    m[1 * w + 1] = 1; m[2 * w + 2] = 1;
+    const r = E.maskToLoops(m, w, h, { tolerance: 0, round: 0 });
+    log('diagonal', { pieces: r.pieces, holes: r.holes });
+  }
+  // 4. random blob mask: every loop closes, sum of positive areas minus holes == pixel count
+  {
+    const w = 60, h = 50, m = new Uint8Array(w * h);
+    let s = 7; const rnd = () => { s = (s * 1103515245 + 12345) & 0x7fffffff; return s / 0x7fffffff; };
+    for (let i = 0; i < m.length; i++) m[i] = rnd() < 0.55 ? 1 : 0;
+    const r = E.maskToLoops(m, w, h, { tolerance: 0, round: 0 });
+    const area = r.loops.reduce((a, l) => a + l.area, 0);
+    log('random', { area, pixels: E.maskStats(m), ok: Math.abs(area - E.maskStats(m)) < 1e-6 });
+  }
+  // 5. simplify + chaikin keep a loop valid
+  {
+    const w = 40, h = 40, m = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if ((x - 20) ** 2 + (y - 20) ** 2 < 15 * 15) m[y * w + x] = 1;
+    const raw = E.traceMask(m, w, h)[0];
+    const simp = E.simplify(raw, 1.0);
+    const smooth = E.chaikin(simp, 1);
+    log('circle', { rawPts: raw.length / 2, simpPts: simp.length / 2, smoothPts: smooth.length / 2, areaRaw: E.loopArea(raw), areaSimp: E.loopArea(simp) });
+  }
+  // 6. color round trip + deltaE
+  {
+    const lab = E.rgbToLab(200, 30, 80), back = E.labToRgb(...lab).map(Math.round);
+    const de = E.deltaE2000(E.hexToLab('#ff0000'), E.hexToLab('#fe0000'));
+    const de2 = E.deltaE2000([50, 2.6772, -79.7751], [50, 0, -82.7485]); // Sharma test pair 1 -> 2.0425
+    log('color', { lab: lab.map(v => +v.toFixed(2)), back, deSmall: +de.toFixed(3), sharma1: +de2.toFixed(4) });
+  }
+  // 7. full pipeline on synthetic image: 3 flat colors + noise, cluster -> palette
+  {
+    const w = 120, h = 90, rgba = new Uint8ClampedArray(w * h * 4);
+    let s = 3; const rnd = () => { s = (s * 1103515245 + 12345) & 0x7fffffff; return s / 0x7fffffff; };
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      let c = x < 40 ? [200, 40, 40] : x < 80 ? [40, 160, 60] : [240, 230, 120];
+      rgba[i] = c[0] + rnd() * 20; rgba[i + 1] = c[1] + rnd() * 20; rgba[i + 2] = c[2] + rnd() * 20; rgba[i + 3] = 255;
+      if (y < 10 && x > 110) rgba[i + 3] = 0; // transparent corner
+    }
+    const pre = E.preprocess(rgba, w, h, { blur: 1 });
+    const pal = CutPalettes.DEFAULT_PACKS[3].colors.map(c => ({ hex: c.hex }));
+    const seg = E.segment(pre, pal, { mode: 'cluster', k: 3, unique: true, deltaE: '2000' });
+    let labels = E.clustersToLabels(seg.clusterIdx, seg.clusters);
+    labels = E.modeFilter(labels, w, h, 1, pal.length);
+    labels = E.despeckle(labels, w, h, 30, 2, pal.length, -1);
+    const used = {}; for (let i = 0; i < labels.length; i++) used[labels[i]] = (used[labels[i]] || 0) + 1;
+    const order = Object.keys(used).map(Number).filter(l => l >= 0).sort((a, b) => used[b] - used[a]);
+    const layers = E.buildLayers(labels, w, h, order, 'stacked', {});
+    const inlay = E.buildLayers(labels, w, h, order, 'inlay', { underlap: 1 });
+    const traced = layers.map(L => E.maskToLoops(L.mask, w, h, { tolerance: 1, round: 1, minLoopArea: 4 }));
+    const svg = E.buildSvg({ w, h, widthIn: 4, margin: 6, regMarks: true, title: 't', layers: layers.map((L, i) => ({ name: 'L' + i, hex: pal[L.label].hex, d: E.pathD(traced[i].loops) })) });
+    log('pipeline', {
+      clusters: seg.clusters.map(c => ({ hex: c.hex, paper: pal[c.paletteIdx].hex, count: c.count })),
+      used, order, stackedCoverage: layers.map(l => +l.coverage.toFixed(3)), inlayCoverage: inlay.map(l => +l.coverage.toFixed(3)),
+      pieces: traced.map(t => [t.pieces, t.holes]), svgLen: svg.length, svgHead: svg.slice(0, 160)
+    });
+    // nearest + tones modes run
+    const segN = E.segment(pre, pal, { mode: 'nearest', deltaE: '76' });
+    const segT = E.segment(pre, pal, { mode: 'tones', toneColors: [6, 0, 2], toneSpread: 'quantile' });
+    log('modes', { nearest: segN.clusters.filter(c => c.count > 0).map(c => c.hex), tones: segT.clusters.map(c => [c.hex, c.count]) });
+    // sobel + dilate
+    const sb = E.sobel(pre); const em = E.dilate(E.thresholdMask(sb, 0.3), w, h, 1);
+    log('edges', { edgePx: E.maskStats(em) });
+    // fill region
+    const touched = E.fillRegion(labels, w, h, 5, 5, 99);
+    log('fill', { touched: touched.length });
+  }
+  {
+    const w = 41, h = 41, m = new Uint8Array(w * h); m[20 * w + 20] = 1;
+    const d = E.dilate(m, w, h, 8); const cnt = E.maskStats(d);
+    const sq = new Uint8Array(w * h); for (let y = 5; y < 36; y++) for (let x = 5; x < 36; x++) sq[y * w + x] = 1;
+    const er = E.erode(sq, w, h, 3); const back = E.dilate(er, w, h, 3);
+    const pd = E.pathD([[0,0, 10,0, 10,10, 0,10]], 1, true); const circ = E.maskToLoops(d, w, h, { tolerance: 0.8, preRound: 1 }).loops[0].pts; const pc = E.pathD([circ], 1, true);
+    // flattenLoops follows the same Beziers pathD writes: same start point, same area as the SVG curve
+    const flat = E.flattenLoops([circ], true, null, 0.05)[0], flatLines = E.flattenLoops([circ], false)[0];
+    // reference: the curve as written in the SVG path, sampled densely
+    const tok = E.pathD([circ], 6, true).match(/[MLCZ]|-?[\d.]+/g); const ref = []; let cx0 = 0, cy0 = 0;
+    for (let i = 0; i < tok.length;) {
+      const c = tok[i++];
+      if (c === 'M' || c === 'L') { cx0 = +tok[i++]; cy0 = +tok[i++]; ref.push(cx0, cy0); }
+      else if (c === 'C') { const q = tok.slice(i, i + 6).map(Number); i += 6; for (let k = 1; k <= 200; k++) { const u = k / 200, v = 1 - u; ref.push(v*v*v*cx0 + 3*v*v*u*q[0] + 3*v*u*u*q[2] + u*u*u*q[4], v*v*v*cy0 + 3*v*v*u*q[1] + 3*v*u*u*q[3] + u*u*u*q[5]); } cx0 = q[4]; cy0 = q[5]; }
+    }
+    log('flatten', { start: [flat[0], flat[1]], circStart: [circ[0], circ[1]], areaFlat: Math.abs(E.loopArea(flat)), areaSvg: Math.abs(E.loopArea(ref)), flatPts: flat.length / 2, linesSame: flatLines.join() === circ.join() });
+    log('morph', { discPx: cnt, expect: Math.round(Math.PI * 64), erodeCount: E.maskStats(er), expectErode: 25 * 25, roundTrip: E.maskStats(back), squareIsLines: !/C/.test(pd), circleHasCurves: /C/.test(pc), curveCmds: (pc.match(/C/g) || []).length, circPts: circ.length / 2, pc: pc.slice(0, 200) });
+  }
+  results.ALL_OK = true;
+} catch (e) { results.error = String(e) + '\n' + e.stack; }
+document.getElementById('out').textContent = JSON.stringify(results, null, 1);
+</script>

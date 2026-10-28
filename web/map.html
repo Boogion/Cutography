@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Mask Set · PaperStrata</title>
+<link rel="stylesheet" href="css/fonts.css">
+<link rel="stylesheet" href="css/styles.css">
+<link rel="stylesheet" href="css/map.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div>
+    <h1 id="siteTitle">Mask Set</h1>
+    <div class="sub">Real terrain, streets and water as a stack of cardstock wafers, drawn like a photomask set</div>
+  </div>
+  <div class="spacer"></div>
+  <a class="btn sm" href="index.html">← Home</a>
+  <span class="chip" id="chipSize">no map yet</span>
+  <span class="chip" id="chipLayers">layers</span>
+</header>
+
+<main class="wafer-ws">
+  <section class="wstage" aria-label="Preview">
+    <div class="toolbar">
+      <div class="group" id="viewTabsW">
+        <button class="btn active" data-view="stack">Assembled</button>
+        <button class="btn" data-view="exploded">Exploded</button>
+        <button class="btn" data-view="cuts">Every cut</button>
+      </div>
+      <label id="explodeRow" hidden>Spread <input type="range" id="explode" min="0" max="100" value="60"></label>
+    </div>
+    <div class="wwrap" id="waferWrap">
+      <canvas id="waferCanvas" width="16" height="16"></canvas>
+      <div class="cuts-grid" id="cutsGridW" hidden></div>
+      <div class="busy" id="busyW" hidden>Building…</div>
+      <div class="wempty" id="emptyW" hidden></div>
+    </div>
+    <div class="statusline" id="statusW"></div>
+  </section>
+
+  <section class="panel wpanel" aria-label="Design">
+    <div class="wsec">
+      <h2>1 · Place</h2>
+      <div class="row">
+        <label for="sitePick">Map</label>
+        <select id="sitePick"></select>
+      </div>
+      <p class="note" id="siteNote"></p>
+      <div class="btns">
+        <button class="btn" id="btnNewSite">New location…</button>
+        <button class="btn sm" id="btnDeleteSite" hidden>Delete this map</button>
+      </div>
+      <form class="newsite" id="newSite" hidden>
+        <label class="field">Name <input type="text" id="nsName" placeholder="e.g. Mount Tamalpais" maxlength="60" required></label>
+        <label class="field">Coordinates
+          <input type="text" id="nsCoords" placeholder="Paste from Google Maps: 37.9235, -122.5965" autocomplete="off" required>
+        </label>
+        <p class="note" id="nsCoordsOut">In Google Maps, right-click a spot and click the numbers at the top of the menu to copy them. A Google Maps link or 37°55'24.6"N 122°35'47.4"W also works.</p>
+        <div class="field">Field of view (wafer diameter)
+          <div class="dia">
+            <input type="number" id="nsDia" min="0.2" max="30" step="0.1" value="5" required>
+            <div class="group unit" id="nsUnit" role="radiogroup" aria-label="Unit">
+              <button type="button" class="btn sm active" data-unit="km" aria-pressed="true">km</button>
+              <button type="button" class="btn sm" data-unit="mi" aria-pressed="false">mi</button>
+            </div>
+          </div>
+        </div>
+        <p class="note" id="nsScale"></p>
+        <div class="btns">
+          <button class="btn primary" id="nsGo" type="submit">Download map data</button>
+          <button class="btn" id="nsCancel" type="button">Cancel</button>
+        </div>
+        <div class="xp-status" id="nsStatus" hidden><div id="nsMsg"></div><div class="xp-bar"><i id="nsBar"></i></div></div>
+        <p class="note">Elevation from AWS Terrain Tiles; streets, water and buildings from OpenStreetMap. Downloads take from a few seconds to a couple of minutes, and are kept for next time.</p>
+      </form>
+    </div>
+
+    <div class="wsec">
+      <h2>2 · Look</h2>
+      <div class="look-cards">
+        <label class="look-card"><input type="radio" name="pal" value="white" checked><b>White relief</b><span>All white; shadows draw the terrain and foil lights the streets.</span></label>
+        <label class="look-card"><input type="radio" name="pal" value="oxide"><b>Oxide colors</b><span>Each sheet takes the interference color of a thicker oxide on silicon.</span></label>
+        <label class="look-card"><input type="radio" name="pal" value="greens"><b>Topo greens</b><span>Classic map tint, dark valley floor to pale ridge tops.</span></label>
+      </div>
+      <p class="note" id="paletteNote"></p>
+    </div>
+
+    <div class="wsec">
+      <h2>3 · Terrain</h2>
+      <div class="row"><label for="levels">Terrain masks (sheets)</label><span class="val" id="levelsOut">8</span><input type="range" id="levels" min="4" max="10" value="8"></div>
+      <p class="note" id="intervalOut"></p>
+      <div class="row">
+        <label for="spacing">Contour spacing</label>
+        <select id="spacing"><option value="height" selected>Equal height (true contours)</option><option value="area">Equal area (balanced sheets)</option></select>
+        <label for="geom">Geometry</label>
+        <select id="geom"><option value="octi" selected>0°, 45°, 90° (layout)</option><option value="manhattan">0° and 90° only</option></select>
+        <label for="grid">Layout grid</label>
+        <select id="grid"><option value="3">Fine · 1/16 in</option><option value="4" selected>Medium · 1/12 in</option><option value="6">Bold · 1/8 in</option></select>
+        <label for="orient">Orientation</label>
+        <select id="orient"><option value="north" selected>North up</option><option value="grid">Street grid square to the wafer</option></select>
+        <label for="frame" data-needs="frames">Frame</label>
+        <select id="frame" data-needs="frames"></select>
+        <label for="wafer">Wafer</label>
+        <select id="wafer"><option value="200" selected>200 mm with notch (7.87 in)</option><option value="150">150 mm with flat (5.91 in)</option></select>
+      </div>
+      <label class="check"><input type="checkbox" id="sea" checked> Ground at or below sea level is water</label>
+    </div>
+
+    <div class="wsec">
+      <h2>4 · Buildings and marks</h2>
+      <div class="row">
+        <label for="mount">Buildings</label>
+        <select id="mount"><option value="top" selected>On top: cut together, place after</option><option value="inlay">Inlaid flush in their own holes</option><option value="via">Cut out to the foil</option></select>
+        <label for="mainCount">Landmark buildings</label>
+        <select id="mainCount"><option value="0">None</option><option value="4">4 largest</option><option value="8" selected>8 largest</option><option value="12">12 largest</option><option value="16">16 largest</option></select>
+        <label for="mainShape">Building shapes</label>
+        <select id="mainShape"><option value="trace" selected>Traced footprints</option><option value="rect">Simple rectangles</option></select>
+      </div>
+      <div id="extraOptions" class="extra-options" hidden></div>
+      <div id="paperRows">
+        <div class="row"><label for="mainPaper">Building paper</label><select id="mainPaper"></select></div>
+      </div>
+      <label class="check" id="denseRow"><input type="checkbox" id="dense" checked> Lay building pieces out tightly on one sheet per paper</label>
+      <h3 class="sub-h">Streets and water</h3>
+      <div class="row">
+        <label for="streetDetail">Streets</label>
+        <select id="streetDetail"><option value="all" selected>Every downloaded street</option><option value="major">Main and secondary roads</option><option value="main">Main roads only</option></select>
+        <label for="streetPaper">Streets and grid marks layer</label><select id="streetPaper"></select>
+        <label for="waterPaper">Water layer</label><select id="waterPaper"></select>
+      </div>
+      <label class="check"><input type="checkbox" id="water" checked> Rivers, lakes and sea on their own water layer</label>
+      <p class="note">On top: no holes are cut for buildings; each gets a flat seat, all pieces are cut together, and a stencil disc shows where they go. Click a building on the Assembled view to add or remove it. Blue is kept for water.</p>
+      <div class="checks">
+        <label class="check"><input type="checkbox" id="roads" checked> Streets cut down to the streets layer</label>
+        <label class="check"><input type="checkbox" id="align" checked> Overlay marks at 3 and 9 o'clock</label>
+        <label class="check"><input type="checkbox" id="gauge" checked> Step gauge at 12 o'clock</label>
+        <label class="check"><input type="checkbox" id="fields" checked> Stepper field marks (26 × 33 mm)</label>
+        <label class="check"><input type="checkbox" id="north" checked> North marker</label>
+        <label class="check"><input type="checkbox" id="lettering" checked> Ring lettering cut into the top sheet</label>
+      </div>
+    </div>
+
+    <div class="wsec">
+      <h2>5 · Export</h2>
+      <div class="layer-list" id="layerListW"></div>
+      <div id="exportPanel"></div>
+      <div class="btns"><button class="btn sm" id="btnPngW">Preview picture (.png)</button></div>
+      <h3 class="sub-h">Assembly</h3>
+      <textarea class="cut-sheet" id="assembly" readonly spellcheck="false"></textarea>
+      <div class="btns"><button class="btn sm" data-copy="assembly">Copy assembly notes</button></div>
+      <h3 class="sub-h">Exhibit placard</h3>
+      <textarea class="cut-sheet" id="placard" readonly spellcheck="false"></textarea>
+      <div class="btns"><button class="btn sm" data-copy="placard">Copy placard</button></div>
+    </div>
+  </section>
+</main>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="vendor/jszip.min.js"></script>
+<script src="js/engine.js"></script>
+<script src="js/export.js"></script>
+<script src="js/export-ui.js"></script>
+<script src="js/palettes.js"></script>
+<script src="js/map.js"></script>
+</body>
+</html>

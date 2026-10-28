@@ -1,0 +1,18 @@
+# Internal material that is never published: ORNL data and add-on, the pre-cleanup snapshot.
+internal/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# PyInstaller
+build/
+dist/
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

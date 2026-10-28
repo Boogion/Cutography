@@ -1,0 +1,71 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>export tests</title>
+<script src="../../web/js/export.js"></script>
+<pre id="out">running</pre>
+<script>
+/* Builds known shapes, runs every writer, and prints JSON (with files as base64) for
+   tests/py/test_exports.py to decode and check independently. Open it in a browser to read the
+   in-page checks, or let the Python test drive it with headless Edge/Chrome. */
+const X = CutExport;
+const checks = {}, files = {};
+const check = (name, ok, detail) => { checks[name] = { ok: !!ok, detail }; };
+const sq = (x, y, s) => [x, y, x + s, y, x + s, y + s, x, y + s];
+const circle = (cx, cy, r, n) => { const o = []; for (let i = 0; i < n; i++) { const a = 2 * Math.PI * i / n; o.push(cx + r * Math.cos(a), cy + r * Math.sin(a)); } return o; };
+const b64 = async blob => { const b = new Uint8Array(await blob.arrayBuffer()); let s = ''; for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000)); return btoa(s); };
+
+(async () => {
+  try {
+    // Layer 1: 2 in square with a 1 in hole holding a 0.5 in island; a separate 1 in square with two 0.25 in holes.
+    // Layer 2: a 0.8 in disc. Expected areas (in²): L1 = 4 - 1 + 0.25 + 1 - 2*0.0625 = 4.125, L2 = pi*0.16.
+    const L1 = [sq(0, 0, 2), sq(0.5, 0.5, 1), sq(0.75, 0.75, 0.5), sq(2.5, 0.5, 1), sq(2.6, 0.6, 0.25), sq(3.1, 1.1, 0.25)];
+    const L2 = [circle(1, 1, 0.4, 720)];
+    const set = { name: 'export test', bounds: [0, 0, 3.5, 2], origin: 'lowerLeft', layers: [
+      { id: 'L01-white', name: 'White', hex: '#f7f6f2', loops: L1 },
+      { id: 'L02-blue', name: 'Blue', hex: '#1f4fa3', loops: L2 }
+    ] };
+
+    const pieces = X.loopsToPieces(L1);
+    check('pieces', pieces.length === 3 && pieces.map(p => p.holes.length).sort().join() === '0,1,2', pieces.map(p => p.holes.length));
+    const pieceArea = pieces.reduce((a, p) => a + Math.abs(X.loopArea(X.keyhole(p))), 0);
+    check('keyholeArea', Math.abs(pieceArea - 4.125) < 1e-9, pieceArea);
+
+    const big = circle(0, 0, 3, 20000), parts = X.splitLarge(big, 8000);
+    const partArea = parts.reduce((a, p) => a + Math.abs(X.loopArea(p)), 0);
+    check('split', parts.every(p => p.length / 2 <= 8000) && Math.abs(partArea - Math.abs(X.loopArea(big))) < 1e-6, { parts: parts.map(p => p.length / 2), partArea });
+
+    const hex = a => Array.from(a, v => v.toString(16).padStart(2, '0')).join('');
+    // expected bytes are what KLayout 0.30 writes for the same UNITS record
+    check('real8', hex(X._real8(1e-3)) === '3e4189374bc6a7f0' && hex(X._real8(1e-9)) === '3944b82fa09b5a54', [hex(X._real8(1e-3)), hex(X._real8(1e-9))]);
+
+    const pb = X._packBits(Uint8Array.from([1, 1, 1, 1, 2, 3, 4, 4, 5]));
+    check('packBits', hex(pb) === 'fd01010203ff040005', hex(pb));
+
+    const gds = X.gds(set, { labels: true });
+    files['test.gds'] = await b64(new Blob([gds]));
+    files['test.lyp'] = btoa(X.lyp(set));
+
+    const f = X.frame(set, 100);
+    files['mask-L01.png'] = await b64(await X.png(X.maskRows(L1, f), { kind: 'gray1', dpi: 100 }));
+    files['cricut-L02.png'] = await b64(await X.png(X.maskRows(L2, f), { kind: 'index1', palette: [[0, 0, 0], X.hexRgb('#1f4fa3')], transparent: [0], dpi: 100 }));
+    files['label.png'] = await b64(await X.png(X.labelRows(set, f), { kind: 'index8', palette: [[255, 255, 255], [247, 246, 242], [31, 79, 163]], transparent: [0], dpi: 100 }));
+    files['rgb.png'] = await b64(await X.png(X.rgbRows(set, f, '#ffffff'), { kind: 'rgb', dpi: 100 }));
+    files['mask-L01.tif'] = await b64(await X.tiff(X.maskRows(L1, f), { kind: 'bilevel', dpi: 100, description: 'L01 White' }));
+    files['label.tif'] = await b64(await X.tiff(X.labelRows(set, f), { kind: 'gray8', dpi: 100 }));
+    files['rgb.tif'] = await b64(await X.tiff(X.rgbRows(set, f, '#ffffff'), { kind: 'rgb', dpi: 100 }));
+    const fm = X.frame(set, 100, true);
+    files['mask-L01-mirror.png'] = await b64(await X.png(X.maskRows(L1, fm), { kind: 'gray1', dpi: 100 }));
+    files['mask-L01-invert.png'] = await b64(await X.png(X.maskRows(L1, f, true), { kind: 'gray1', dpi: 100 }));
+    files['manifest.json'] = btoa(X.manifest(set, { frame: f }));
+
+    // Pixel count of the 100 dpi mask should match the area within a pixel-edge tolerance.
+    const mr = X.maskRows(L1, f); let on = 0;
+    for (let j = 0; j < f.height; j++) { const r = mr.row(j); for (let i = 0; i < f.width; i++) if (r[i >> 3] & (0x80 >> (i & 7))) on++; }
+    check('maskArea', Math.abs(on / 1e4 - 4.125) < 0.01, on / 1e4);
+    check('frame', f.width === 350 && f.height === 200, [f.width, f.height]);
+  } catch (e) { checks.error = { ok: false, detail: String(e) + '\n' + e.stack }; }
+  const ok = Object.values(checks).every(c => c.ok);
+  document.getElementById('out').textContent = JSON.stringify({ ok, checks, files });
+  document.title = ok ? 'PASS' : 'FAIL';
+})();
+</script>

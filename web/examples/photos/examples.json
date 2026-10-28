@@ -1,0 +1,29 @@
+[
+  {
+    "file": "sunflower.jpg",
+    "title": "Sunflower",
+    "description": "A bold yellow sunflower with a dark seed head against an almost uniform deep-blue sky, so a few clusters give clean, flat petal, centre, leaf and sky layers.",
+    "author": "Cbuske46",
+    "license": "CC0 1.0",
+    "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "source": "https://commons.wikimedia.org/wiki/File:Sunflower_on_a_Beautiful_Blue_Sky.jpg"
+  },
+  {
+    "file": "blue-ridge-sunset.jpg",
+    "title": "Blue Ridge Sunset",
+    "description": "Overlapping mountain ridges fade from near-black to pale violet under a pink sunset sky, giving natural tone bands that map directly onto stacked paper layers.",
+    "author": "U.S. National Park Service (Shenandoah National Park)",
+    "license": "Public domain (U.S. federal government work)",
+    "licenseUrl": "https://commons.wikimedia.org/wiki/Template:PD-USGov-NPS",
+    "source": "https://commons.wikimedia.org/wiki/File:Sunset_-_Moormans_River_Overlook_(1a00cb34-155d-451f-67fa-ebbbd1773fb9).jpg"
+  },
+  {
+    "file": "red-fox.jpg",
+    "title": "Red Fox",
+    "description": "A sharply focused orange fox with white chest and dark legs stands against a soft blurred blue background, so its outline separates cleanly from the backdrop.",
+    "author": "Ray Hennessy",
+    "license": "CC0 1.0",
+    "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "source": "https://commons.wikimedia.org/wiki/File:Red_fox_gazing_in_the_direction_of_the_setting_sun.jpg"
+  }
+]

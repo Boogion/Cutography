@@ -1,0 +1,17 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>view</title>
+<style>html, body { margin: 0; height: 100%; } iframe { border: 0; width: 100%; height: 100%; }</style>
+<!-- Dev helper for screenshots: /tests/js/view.html?page=photo&step=5 opens a tool full-window at a given step. -->
+<iframe id="f"></iframe>
+<script>
+const q = new URLSearchParams(location.search), f = document.getElementById('f');
+f.src = '/' + (q.get('page') || 'photo') + '.html' + (q.get('site') ? '?site=' + q.get('site') : '');
+f.onload = async () => {
+  const w = f.contentWindow;
+  for (let i = 0; i < 600 && !(w.CutStudio && w.CutStudio.state.result) && !(w.MaskSet && w.MaskSet.model); i++) await new Promise(r => setTimeout(r, 100));
+  if (q.get('step') && w.CutStudio) w.CutStudio.goStep(Number(q.get('step')));
+  if (q.get('view') && w.CutStudio) w.CutStudio.setView(q.get('view'));
+  if (q.get('scroll')) { const el = w.document.getElementById(q.get('scroll')); if (el) el.scrollIntoView(); }
+};
+</script>
